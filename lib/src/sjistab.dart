@@ -1,0 +1,51 @@
+// sjistab.dart
+//
+// Ported from sjistab.py (automatically generated, Public Domain)
+// Shift-JIS normalization table: maps certain Unicode characters
+// (typically fullwidth/halfwidth variants) to their normalized forms.
+
+// Each key is a single Unicode character; value is the normalized replacement.
+const Map<String, String> shiftJisNormalizeTable = {
+  '\uFF81': '\u30C1', '\u3000': ' ',  '\uFF85': '\u30CA', '\uFF06': '&',
+  '\uFF89': '\u30CE', '\uFF0A': '*',  '\uFF8D': '\u30D8', '\uFF0E': '.',
+  '\uFF91': '\u30E0', '\uFF12': '2',  '\uFF95': '\u30E6', '\uFF16': '6',
+  '\uFF99': '\u30EB', '\u309B': ' \u3099', '\uFF1A': ':',  '\uFF9D': '\u30F3',
+  '\uFF03': '#',      '\uFF1E': '>',  '\uFF22': 'B',      '\uFF26': 'F',
+  '\uFF2A': 'J',      '\u222C': '\u222B\u222B', '\uFF2E': 'N', '\uFF32': 'R',
+  '\uFF36': 'V',      '\uFF3A': 'Z',  '\uFF3E': '^',      '\uFF42': 'b',
+  '\uFF46': 'f',      '\uFF4A': 'j',  '\uFF4E': 'n',      '\uFF52': 'r',
+  '\uFF56': 'v',      '\uFF5A': 'z',  '\uFF62': '\u300C',  '\uFFE5': '\u00A5',
+  '\uFF66': '\u30F2', '\uFF6A': '\u30A7', '\uFF6E': '\u30E7', '\uFF72': '\u30A4',
+  '\uFF76': '\u30AB', '\uFF7A': '\u30B3', '\uFF7E': '\u30BB', '\uFF01': '!',
+  '\uFF82': '\u30C4', '\uFF05': '%',  '\uFF86': '\u30CB',  '\uFF09': ')',
+  '\uFF8A': '\u30CF', '\uFF8E': '\u30DB', '\uFF11': '1',  '\uFF92': '\u30E1',
+  '\uFF15': '5',      '\uFF96': '\u30E8', '\uFF19': '9',  '\uFF9A': '\u30EC',
+  '\uFF1D': '=',      '\u309C': ' \u309A', '\uFF9E': '\u3099', '\uFF21': 'A',
+  '\uFF25': 'E',      '\uFF29': 'I',  '\u00A8': ' \u0308', '\uFF2D': 'M',
+  '\uFF31': 'Q',      '\u2033': '\u2032\u2032', '\uFF35': 'U', '\u00B4': ' \u0301',
+  '\uFF39': 'Y',      '\uFF3D': ']',  '\uFF41': 'a',      '\uFF45': 'e',
+  '\uFF49': 'i',      '\uFF4D': 'm',  '\uFF51': 'q',      '\uFF55': 'u',
+  '\uFF59': 'y',      '\uFF5D': '}',  '\uFF61': '\u3002',  '\uFF65': '\u30FB',
+  '\uFF69': '\u30A5', '\uFF6D': '\u30E5', '\uFF71': '\u30A2', '\uFF75': '\u30AA',
+  '\uFF79': '\u30B1', '\uFF7D': '\u30B9', '\uFF83': '\u30C6', '\uFF04': '\$',
+  '\uFF87': '\u30CC', '\uFF08': '(',  '\uFF8B': '\u30D2',  '\uFF0C': ',',
+  '\uFF8F': '\u30DE', '\uFF10': '0',  '\uFF93': '\u30E2',  '\uFF14': '4',
+  '\uFF97': '\u30E9', '\uFF18': '8',  '\uFF9B': '\u30ED',  '\uFF1C': '<',
+  '\uFF9F': '\u309A', '\uFF20': '@',  '\uFF24': 'D',      '\u2026': '...',
+  '\uFF28': 'H',      '\uFF2C': 'L',  '\uFF30': 'P',      '\uFF34': 'T',
+  '\uFF38': 'X',      '\uFF3C': '\\', '\uFF40': '`',      '\uFF44': 'd',
+  '\uFF48': 'h',      '\uFF4C': 'l',  '\uFF50': 'p',      '\uFF54': 't',
+  '\uFF58': 'x',      '\uFF5C': '|',  '\uFFE3': ' \u0304', '\uFF64': '\u3001',
+  '\uFF68': '\u30A3', '\uFF6C': '\u30E3', '\uFF70': '\u30FC', '\uFF74': '\u30A8',
+  '\uFF78': '\u30AF', '\uFF7C': '\u30B7', '\uFF80': '\u30BF', '\u2103': '\u00B0C',
+  '\uFF84': '\u30C8', '\uFF88': '\u30CD', '\uFF0B': '+',  '\uFF8C': '\u30D5',
+  '\uFF0F': '/',      '\uFF90': '\u30DF', '\uFF13': '3',  '\uFF94': '\u30E4',
+  '\uFF17': '7',      '\uFF98': '\u30EA', '\uFF1B': ';',  '\uFF9C': '\u30EF',
+  '\uFF1F': '?',      '\uFF23': 'C',  '\u2025': '..',     '\uFF27': 'G',
+  '\u212B': '\u00C5', '\uFF2F': 'O',  '\uFF33': 'S',      '\uFF37': 'W',
+  '\uFF3B': '[',      '\uFF3F': '_',  '\uFF43': 'c',      '\uFF47': 'g',
+  '\uFF4B': 'k',      '\uFF4F': 'o',  '\uFF53': 's',      '\uFF57': 'w',
+  '\uFF5B': '{',      '\uFF63': '\u300D', '\uFF67': '\u30A1', '\uFF6B': '\u30A9',
+  '\uFF6F': '\u30C3', '\uFF73': '\u30A6', '\uFF77': '\u30AD', '\uFF7B': '\u30B5',
+  '\uFF2B': 'K',      '\uFF7F': '\u30BD',
+};
