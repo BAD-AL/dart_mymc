@@ -373,13 +373,90 @@ class Ps2McFile {
     return result.sublist(0, written);
   }
 
+  int? _extendFile(int n) {
+    final cluster = _mc.allocateCluster();
+    if (cluster == null) return null;
+    if (n == 0) {
+      _firstCluster = cluster;
+      _fatChain = null;
+      _mc.updateDirent(dirloc!, this, cluster, null, false);
+    } else {
+      final prev = _findFileCluster(n - 1);
+      _mc.setFat(prev, cluster | ps2mcFatAllocatedBit);
+    }
+    return cluster;
+  }
+
+  bool _writeFileCluster(int n, Uint8List buf) {
+    final cluster = _findFileCluster(n);
+    if (cluster != ps2mcFatChainEnd) {
+      _mc._writeAllocatableCluster(cluster, buf);
+      _buffer = buf;
+      _bufferCluster = n;
+      return true;
+    }
+
+    final clusterSize = _mc.clusterSize;
+    final fileClusterEnd = divRoundUp(length, clusterSize);
+
+    for (int i = fileClusterEnd; i < n; i++) {
+      final newCluster = _extendFile(i);
+      if (newCluster == null) {
+        if (i != fileClusterEnd) {
+          length = (i - 1) * clusterSize;
+          _mc.updateDirent(dirloc!, this, null, length, true);
+        }
+        return false;
+      }
+      _mc._writeAllocatableCluster(newCluster, Uint8List(clusterSize));
+    }
+
+    final newCluster = _extendFile(n);
+    if (newCluster == null) return false;
+
+    _mc._writeAllocatableCluster(newCluster, buf);
+    _buffer = buf;
+    _bufferCluster = n;
+    return true;
+  }
+
   void write(Uint8List out, {bool setModified = true}) {
     if (closed) throw StateError('$name: file is closed');
     if (!_write && !_append) {
       throw Ps2McIoError('file not opened for writing', name);
     }
-    // Write implementation added in Phase 3.
-    throw UnimplementedError('Ps2McFile.write() not yet implemented');
+
+    final clusterSize = _mc.clusterSize;
+    int pos = _append ? length : _pos;
+    int size = out.length;
+    int i = 0;
+
+    while (size > 0) {
+      final cluster = pos ~/ clusterSize;
+      final off = pos % clusterSize;
+      final l = (clusterSize - off) < size ? (clusterSize - off) : size;
+      Uint8List buf;
+      if (l == clusterSize) {
+        buf = Uint8List.fromList(out.sublist(i, i + l));
+      } else {
+        final existing = _readFileCluster(cluster);
+        buf = Uint8List(clusterSize);
+        if (existing != null) buf.setRange(0, clusterSize, existing);
+        buf.setRange(off, off + l, out, i);
+      }
+      if (!_writeFileCluster(cluster, buf)) {
+        throw Ps2McNoSpace(name);
+      }
+      pos += l;
+      _pos = pos;
+      int? newLength;
+      if (pos > length) {
+        newLength = length = pos;
+      }
+      _mc.updateDirent(dirloc!, this, null, newLength, setModified);
+      i += l;
+      size -= l;
+    }
   }
 
   void seek(int offset, [int whence = 0]) {
@@ -433,18 +510,30 @@ class Ps2McDirectory with Iterable<PS2DirEntry> {
     return PS2DirEntry.unpack(raw);
   }
 
-  // ignore: unused_element
-  void operator []=(int index, PS2DirEntry newEnt) {
-    // Used in Phase 3 write operations.
-    // Mirrors ps2mc_directory.__setitem__ in Python.
-    throw UnimplementedError('Directory entry modification not yet implemented');
+  /// Merge non-null fields from [newEnt] into the entry at [index].
+  /// Fields that are "sentinel" values (mode == -1 means "don't change name")
+  /// follow Python's convention: pass a copyWith() with the changed fields.
+  /// This operator only writes if the entry exists.
+  void mergeEnt(int index, PS2DirEntry newEnt) {
+    final ent = this[index];
+    if (!ent.exists) return;
+    // Mirror Python's __setitem__: only update mode (preserving FILE/DIR/EXISTS),
+    // unused, created, modified, attr.  Do NOT touch length, fatCluster, parentEntry.
+    final mergedMode = (newEnt.mode & ~(dfFile | dfDir | dfExists)) |
+        (ent.mode & (dfFile | dfDir | dfExists));
+    final merged = ent.copyWith(
+      mode: mergedMode,
+      unused: newEnt.unused,
+      created: newEnt.created,
+      modified: newEnt.modified,
+      attr: newEnt.attr,
+    );
+    writeRawEnt(index, merged, setModified: false);
   }
 
   void writeRawEnt(int index, PS2DirEntry ent, {bool setModified = true}) {
     seek(index);
-    // Direct write into the underlying file's cluster buffer.
-    // In Phase 1 (read-only) this is never called.
-    throw UnimplementedError('writeRawEnt() not yet implemented');
+    _f.write(ent.pack(), setModified: setModified);
   }
 
   void seek(int offset) {
@@ -534,8 +623,7 @@ class Ps2MemoryCard {
   Map<_DirLoc, (Ps2McDirectory?, Set<Ps2McFile>)>? _openFiles = {};
   final _LruCache<int, (Uint32List, bool)> _fatCache = _LruCache(12);
   final _LruCache<int, (Uint8List, bool)> _allocClusterCache = _LruCache(64);
-  // ignore: unused_field
-  int _fatCursor = 0; // used in allocate_cluster() (Phase 3)
+  int _fatCursor = 0;
 
   // ---------------------------------------------------------------------------
   // Constructor / open
@@ -543,7 +631,9 @@ class Ps2MemoryCard {
 
   Ps2MemoryCard(String path, {bool ignoreEcc = false, List<int>? formatParams}) {
     _filePath = path;
-    final mode = formatParams != null ? FileMode.write : FileMode.read;
+    // FileMode.write  → O_RDWR | O_CREAT | O_TRUNC  (new card)
+    // FileMode.append → O_RDWR | O_CREAT (no truncate) (existing card, read-write)
+    final mode = formatParams != null ? FileMode.write : FileMode.append;
     _f = File(path).openSync(mode: mode);
     _openFiles = {};
 
@@ -760,7 +850,6 @@ class Ps2MemoryCard {
     return buf;
   }
 
-  // ignore: unused_element
   void _writeAllocatableCluster(int n, Uint8List buf) {
     _addAllocClusterToCache(n, buf, true);
   }
@@ -804,6 +893,53 @@ class Ps2MemoryCard {
     _writeFatCluster(cluster, fat);
   }
 
+  /// Read the FAT cluster at FAT-cluster index [n] (not allocatable cluster
+  /// index).  Returns the fat array and the physical cluster number.
+  /// Mirrors Python's read_fat_cluster(n).
+  (Uint32List fat, int cluster) _readFatClusterByIdx(int n) {
+    final indirectOffset = n % entriesPerCluster;
+    final dblOffset = n ~/ entriesPerCluster;
+    final indirectCluster = indirectFatClusterList[dblOffset];
+    final indirectFat = _readFatClusterRaw(indirectCluster);
+    final cluster = indirectFat[indirectOffset];
+    return (_readFatClusterRaw(cluster), cluster);
+  }
+
+  /// Allocate a free cluster and mark it as chain-end.  Returns the cluster
+  /// index, or null if the card is full.
+  int? allocateCluster() {
+    final epc = entriesPerCluster;
+    final end = divRoundUp(allocatableClusterLimit, epc);
+    final remainder = allocatableClusterLimit % epc;
+
+    while (_fatCursor < end) {
+      final (fat, cluster) = _readFatClusterByIdx(_fatCursor);
+      final limit =
+          (_fatCursor == end - 1 && remainder != 0) ? remainder : epc;
+      // Find minimum value in range (Python uses min() to find a free slot
+      // quickly since unallocated clusters have the high bit clear).
+      int minVal = fat[0];
+      for (int i = 1; i < limit; i++) {
+        if (fat[i] < minVal) minVal = fat[i];
+      }
+      if ((minVal & ps2mcFatAllocatedBit) == 0) {
+        // Find the index of the free slot.
+        int offset = 0;
+        for (int i = 0; i < limit; i++) {
+          if (fat[i] == minVal) {
+            offset = i;
+            break;
+          }
+        }
+        fat[offset] = ps2mcFatChainEnd;
+        _writeFatCluster(cluster, fat);
+        return _fatCursor * epc + offset;
+      }
+      _fatCursor++;
+    }
+    return null;
+  }
+
   FatChain _fatChain(int firstCluster) =>
       FatChain(lookupFat, firstCluster);
 
@@ -837,7 +973,6 @@ class Ps2MemoryCard {
     return root;
   }
 
-  // ignore: unused_element
   _DirLoc _getParentDirLoc(_DirLoc dirloc) {
     final cluster = _readAllocatableCluster(dirloc.$1);
     final ent = PS2DirEntry.unpack(cluster.sublist(0, ps2mcDirentLength));
@@ -852,11 +987,14 @@ class Ps2MemoryCard {
     return ent;
   }
 
-  // ignore: unused_element, unused_element_parameter
   Ps2McDirectory _opendirDirLoc(_DirLoc dirloc, {String mode = 'rb'}) {
     final ent = _dirLocToEnt(dirloc);
     return _directoryByLoc(dirloc, ent.fatCluster, ent.length,
-        name: '_opendir temp');
+        mode: mode, name: '_opendir temp');
+  }
+
+  Ps2McDirectory _opendirParentDirLoc(_DirLoc dirloc, {String mode = 'rb'}) {
+    return _opendirDirLoc(_getParentDirLoc(dirloc), mode: mode);
   }
 
   // ---------------------------------------------------------------------------
@@ -930,7 +1068,10 @@ class Ps2MemoryCard {
       dir.close();
       dir = null;
 
-      if (foundEnt == null) continue;
+      if (foundEnt == null) {
+        ent = _emptyEnt(s);
+        continue;
+      }
 
       ent = foundEnt;
       dirloc = (dirCluster, foundIdx!);
@@ -999,15 +1140,28 @@ class Ps2MemoryCard {
   }
 
   Ps2McFile open(String filename, {String mode = 'r'}) {
-    final result = pathSearch(filename);
+    var result = pathSearch(filename);
     if (result.dirloc == null) throw Ps2McPathNotFound(filename);
     if (result.isDir) throw Ps2McIoError('not a regular file', filename);
     if (!result.ent.exists) {
       if (!mode.startsWith('w') && !mode.startsWith('a')) {
         throw Ps2McFileNotFound(filename);
       }
-      // Create file — Phase 3.
-      throw UnimplementedError('File creation not yet implemented');
+      // Create the file.
+      final name = result.ent.name;
+      final (newDirloc, newEnt) = createDirEntry(
+          result.dirloc!, name, dfFile | dfRwx | df0400);
+      flush();
+      result = (dirloc: newDirloc, ent: newEnt, isDir: false);
+    } else if (mode.startsWith('w')) {
+      // Truncate existing file.
+      deleteDirloc(result.dirloc!, true, filename);
+      result = (
+        dirloc: result.dirloc,
+        ent: result.ent.copyWith(
+            fatCluster: ps2mcFatChainEnd, length: 0),
+        isDir: false
+      );
     }
     final dirloc = result.dirloc!;
     final f = Ps2McFile(
@@ -1125,30 +1279,626 @@ class Ps2MemoryCard {
   }
 
   // ---------------------------------------------------------------------------
-  // Write operations (stubs — implemented in Phase 3)
+  // Write operations
   // ---------------------------------------------------------------------------
 
-  void mkdir(String filename) =>
-      throw UnimplementedError('mkdir() not yet implemented');
+  /// Update a directory entry, merging only the non-null supplied fields.
+  /// Mirrors Python's update_dirent_all().
+  void _updateDirentAll(
+    _DirLoc dirloc,
+    Ps2McFile? thisFile, {
+    int? mode,
+    int? length,
+    PS2Tod? created,
+    int? fatCluster,
+    PS2Tod? modified,
+    int? attr,
+  }) {
+    final opened = _openFiles?[dirloc];
+    Ps2McDirectory? dir;
+    Set<Ps2McFile> files;
+    if (opened == null) {
+      files = {};
+      dir = null;
+    } else {
+      dir = opened.$1;
+      files = opened.$2;
+    }
+    if (dir == null) {
+      dir = _opendirParentDirLoc(dirloc, mode: 'r+b');
+      if (opened != null) {
+        _openFiles![dirloc] = (dir, files);
+      }
+    }
 
-  void remove(String filename) =>
-      throw UnimplementedError('remove() not yet implemented');
+    final ent = dir[dirloc.$2];
+    final isDir = (ent.mode & dfDir) != 0;
 
-  void rmdir(String dirname) =>
-      throw UnimplementedError('rmdir() not yet implemented');
+    // For directories, caller supplies byte-length; convert to entry count.
+    int? actualLength = length;
+    if (isDir && thisFile != null && length != null) {
+      actualLength = length ~/ ps2mcDirentLength;
+    }
 
-  void rename(String oldPath, String newPath) =>
-      throw UnimplementedError('rename() not yet implemented');
+    bool changed = false;
+    bool modifiedChanged = false;
+    bool notify = false;
+
+    if (mode != null && mode != ent.mode) {
+      ent.mode = mode;
+      changed = true;
+    }
+    if (actualLength != null && actualLength != ent.length) {
+      ent.length = actualLength;
+      changed = true;
+      notify = true;
+    }
+    if (created != null) {
+      ent.created = created;
+      changed = true;
+    }
+    if (fatCluster != null && fatCluster != ent.fatCluster) {
+      ent.fatCluster = fatCluster;
+      changed = true;
+      notify = true;
+    }
+    if (modified != null) {
+      ent.modified = modified;
+      changed = true;
+      modifiedChanged = true;
+    }
+    if (attr != null) {
+      ent.attr = attr;
+      changed = true;
+    }
+
+    if (changed) {
+      dir.writeRawEnt(dirloc.$2, ent, setModified: modifiedChanged && !isDir);
+    }
+
+    if (notify) {
+      for (final f in files) {
+        if (f != thisFile) {
+          f.updateNotify(ent.fatCluster, ent.length);
+        }
+      }
+    }
+
+    if (opened == null) {
+      dir.close();
+    }
+  }
+
+  /// Update fat_cluster and/or length of a dir entry.  Mirrors Python's
+  /// update_dirent().
+  void updateDirent(_DirLoc dirloc, Ps2McFile thisFile, int? newFirstCluster,
+      int? newLength, bool setModified) {
+    PS2Tod? modified;
+    if (setModified) {
+      modified = todNow();
+    } else {
+      if (newFirstCluster == null && newLength == null) return;
+      modified = null;
+    }
+    _updateDirentAll(dirloc, thisFile,
+        length: newLength,
+        fatCluster: newFirstCluster,
+        modified: modified);
+  }
+
+  /// Create a new directory entry inside the directory at [parentDirloc].
+  /// Returns the dirloc and the new entry.
+  (_DirLoc, PS2DirEntry) createDirEntry(
+      _DirLoc parentDirloc, String name, int mode) {
+    if (name.isEmpty) throw Ps2McFileNotFound(name);
+
+    final dirEnt = _dirLocToEnt(parentDirloc);
+    final dir = _directoryByLoc(
+        parentDirloc, dirEnt.fatCluster, dirEnt.length,
+        mode: 'r+b');
+    final l = dir.entryCount;
+    assert(l >= 2);
+
+    // Find first free slot or append.
+    int i;
+    for (i = 0; i < l; i++) {
+      if (!dir[i].exists) break;
+    }
+    // i == l if all slots are occupied (will extend the directory file).
+
+    final dirloc = (dirEnt.fatCluster, i);
+    final now = todNow();
+
+    int cluster;
+    int length;
+    if (mode & dfDir != 0) {
+      mode = (mode & ~dfFile) | dfDir;
+      final newCluster = allocateCluster();
+      if (newCluster == null) {
+        dir.close();
+        throw Ps2McNoSpace(name);
+      }
+      cluster = newCluster;
+      length = 1;
+    } else {
+      mode = (mode & ~dfDir) | dfFile;
+      cluster = ps2mcFatChainEnd;
+      length = 0;
+    }
+
+    final ent = PS2DirEntry(
+      mode: mode | dfExists,
+      length: length,
+      created: now,
+      fatCluster: cluster,
+      parentEntry: 0,
+      modified: now,
+      name: name.length > 32 ? name.substring(0, 32) : name,
+    );
+    dir.writeRawEnt(i, ent, setModified: true);
+    dir.close();
+
+    if (mode & dfFile != 0) {
+      return (dirloc, ent);
+    }
+
+    // For directories: write "." cluster and ".." entry.
+    final dotEnt = PS2DirEntry(
+      mode: dfRwx | df0400 | dfDir | dfExists,
+      length: 0,
+      created: now,
+      fatCluster: dirloc.$1, // parent cluster (so _getParentDirLoc works)
+      parentEntry: dirloc.$2, // index in parent
+      modified: now,
+      name: '.',
+    );
+    final dotData = Uint8List(clusterSize);
+    dotData.setRange(0, ps2mcDirentLength, dotEnt.pack());
+    _writeAllocatableCluster(cluster, dotData);
+
+    final dir2 = _directoryByLoc(dirloc, cluster, 1,
+        mode: 'wb', name: '<createDirEntry temp>');
+    dir2.writeRawEnt(
+        1,
+        PS2DirEntry(
+          mode: dfRwx | df0400 | dfDir | dfExists,
+          length: 0,
+          created: now,
+          fatCluster: 0,
+          parentEntry: 0,
+          modified: now,
+          name: '..',
+        ),
+        setModified: false);
+    dir2.close();
+
+    ent.length = 2;
+    return (dirloc, ent);
+  }
+
+  /// Delete or truncate the entry at [dirloc].  Mirrors Python's
+  /// delete_dirloc().
+  void deleteDirloc(_DirLoc dirloc, bool truncate, String name) {
+    if (dirloc == (0, 0)) {
+      throw Ps2McIoError('cannot remove root directory', name);
+    }
+    if (dirloc.$2 == 0 || dirloc.$2 == 1) {
+      throw Ps2McIoError('cannot remove "." or ".." entries', name);
+    }
+    if (_openFiles?.containsKey(dirloc) ?? false) {
+      throw Ps2McIoError('cannot remove open file', name);
+    }
+
+    final epc = entriesPerCluster;
+    final ent = _dirLocToEnt(dirloc);
+    int cluster = ent.fatCluster;
+
+    if (truncate) {
+      _updateDirentAll(dirloc, null,
+          length: 0,
+          fatCluster: ps2mcFatChainEnd,
+          modified: todNow());
+    } else {
+      _updateDirentAll(dirloc, null, mode: ent.mode & ~dfExists);
+    }
+
+    while (cluster != ps2mcFatChainEnd) {
+      if (cluster ~/ epc < _fatCursor) {
+        _fatCursor = cluster ~/ epc;
+      }
+      int nextCluster = lookupFat(cluster);
+      if ((nextCluster & ps2mcFatAllocatedBit) == 0) break; // corrupted
+      nextCluster &= ~ps2mcFatAllocatedBit;
+      setFat(cluster, nextCluster);
+      if (nextCluster == ps2mcFatChainEndUnalloc) break;
+      cluster = nextCluster;
+    }
+  }
+
+  bool _isEmptyDir(_DirLoc dirloc, PS2DirEntry ent) {
+    final dir = _directoryByLoc(dirloc, ent.fatCluster, ent.length);
+    try {
+      for (int i = 2; i < ent.length; i++) {
+        if (dir[i].exists) return false;
+      }
+    } finally {
+      dir.close();
+    }
+    return true;
+  }
+
+  bool _isAncestor(_DirLoc dirloc, _DirLoc oldDirloc) {
+    _DirLoc cur = dirloc;
+    while (true) {
+      if (cur == oldDirloc) return true;
+      if (cur == (0, 0)) return false;
+      cur = _getParentDirLoc(cur);
+    }
+  }
+
+  void mkdir(String filename) {
+    final result = pathSearch(filename);
+    if (result.dirloc == null) throw Ps2McPathNotFound(filename);
+    if (result.ent.exists) throw Ps2McIoError('directory exists', filename);
+    createDirEntry(result.dirloc!, result.ent.name, dfDir | dfRwx | df0400);
+    flush();
+  }
+
+  void remove(String filename) {
+    final result = pathSearch(filename);
+    if (result.dirloc == null) throw Ps2McPathNotFound(filename);
+    if (!result.ent.exists) throw Ps2McFileNotFound(filename);
+    if (result.isDir) {
+      if (result.ent.fatCluster == 0) {
+        throw Ps2McIoError('cannot remove root directory', filename);
+      }
+      if (!_isEmptyDir(result.dirloc!, result.ent)) {
+        throw Ps2McIoError('directory not empty', filename);
+      }
+    }
+    deleteDirloc(result.dirloc!, false, filename);
+    flush();
+  }
+
+  PS2DirEntry getDirent(String filename) {
+    final result = pathSearch(filename);
+    if (result.dirloc == null) throw Ps2McPathNotFound(filename);
+    if (!result.ent.exists) throw Ps2McFileNotFound(filename);
+    return result.ent;
+  }
+
+  void setDirent(String filename, PS2DirEntry newEnt) {
+    final result = pathSearch(filename);
+    if (result.dirloc == null) throw Ps2McPathNotFound(filename);
+    if (!result.ent.exists) throw Ps2McFileNotFound(filename);
+    final dir = _opendirParentDirLoc(result.dirloc!, mode: 'r+b');
+    try {
+      dir.mergeEnt(result.dirloc!.$2, newEnt);
+    } finally {
+      dir.close();
+    }
+    flush();
+  }
+
+  void rename(String oldPath, String newPath) {
+    final oldResult = pathSearch(oldPath);
+    if (oldResult.dirloc == null) throw Ps2McPathNotFound(oldPath);
+    if (!oldResult.ent.exists) throw Ps2McFileNotFound(oldPath);
+
+    if (oldResult.dirloc == (0, 0)) {
+      throw Ps2McIoError('cannot rename root directory', oldPath);
+    }
+    if (_openFiles?.containsKey(oldResult.dirloc) ?? false) {
+      throw Ps2McIoError('cannot rename open file', oldPath);
+    }
+
+    final newResult = pathSearch(newPath);
+    if (newResult.dirloc == null) throw Ps2McPathNotFound(newPath);
+    if (newResult.ent.exists) throw Ps2McIoError('file exists', newPath);
+    final newName = newResult.ent.name;
+
+    final oldParentDirloc = _getParentDirLoc(oldResult.dirloc!);
+    if (oldParentDirloc == newResult.dirloc) {
+      // Same-parent rename: just update the name.
+      final dir = _opendirDirLoc(oldParentDirloc, mode: 'r+b');
+      try {
+        final ent = dir[oldResult.dirloc!.$2];
+        ent.name = newName;
+        dir.writeRawEnt(oldResult.dirloc!.$2, ent, setModified: false);
+      } finally {
+        dir.close();
+      }
+      return;
+    }
+
+    if (oldResult.isDir &&
+        _isAncestor(newResult.dirloc!, oldResult.dirloc!)) {
+      throw Ps2McIoError('cannot move directory beneath itself', oldPath);
+    }
+
+    // Cross-parent rename: create in new location, then unlink from old.
+    _DirLoc? newDirloc;
+    bool newEntCreated = false;
+    try {
+      final tmpMode =
+          (oldResult.ent.mode & ~dfDir) | dfFile; // create as file
+      final (nd, _) =
+          createDirEntry(newResult.dirloc!, newName, tmpMode);
+      newDirloc = nd;
+      newEntCreated = true;
+
+      // Copy all fields from the old entry.
+      final newParentDir =
+          _opendirDirLoc(newResult.dirloc!, mode: 'r+b');
+      try {
+        final merged = oldResult.ent.copyWith(name: newName);
+        newParentDir.writeRawEnt(newDirloc.$2, merged, setModified: true);
+      } finally {
+        newParentDir.close();
+      }
+      newEntCreated = false; // commit
+
+      // Unlink old entry.
+      _updateDirentAll(oldResult.dirloc!, null,
+          mode: oldResult.ent.mode & ~dfExists);
+    } catch (_) {
+      if (newEntCreated && newDirloc != null) {
+        try {
+          deleteDirloc(newDirloc, false, newPath);
+        } catch (_) {}
+      }
+      rethrow;
+    }
+
+    if (!oldResult.isDir) return;
+
+    // Update the "." entry of the moved directory.
+    final newDir = _opendirDirLoc(newDirloc);
+    try {
+      final dotEnt = newDir[0];
+      dotEnt.fatCluster = newDirloc.$1;
+      dotEnt.parentEntry = newDirloc.$2;
+      newDir.writeRawEnt(0, dotEnt, setModified: false);
+    } finally {
+      newDir.close();
+    }
+  }
+
+  void _removeDir(_DirLoc dirloc, PS2DirEntry ent, String dirname) {
+    final firstCluster = ent.fatCluster;
+    final length = ent.length;
+    final dir = _directoryByLoc(dirloc, firstCluster, length);
+    final entries = dir.toList().asMap().entries.skip(2).toList();
+    dir.close();
+
+    for (final e in entries) {
+      final i = e.key;
+      final childEnt = e.value;
+      if (!childEnt.exists) continue;
+      if (childEnt.isDir) {
+        _removeDir((firstCluster, i), childEnt,
+            '${dirname}${childEnt.name}/');
+      } else {
+        deleteDirloc((firstCluster, i), false, '$dirname${childEnt.name}');
+      }
+    }
+    deleteDirloc(dirloc, false, dirname);
+  }
+
+  void rmdir(String dirname) {
+    final result = pathSearch(dirname);
+    if (result.dirloc == null) throw Ps2McPathNotFound(dirname);
+    if (!result.ent.exists) throw Ps2McDirNotFound(dirname);
+    if (!result.isDir) throw Ps2McIoError('not a directory', dirname);
+    if (result.dirloc == (0, 0)) {
+      throw Ps2McIoError("can't delete root directory", dirname);
+    }
+    final suffix = dirname.endsWith('/') ? dirname : '$dirname/';
+    _removeDir(result.dirloc!, result.ent, suffix);
+  }
 
   bool importSaveFile(Ps2SaveFile sf, bool ignoreExisting,
-          {String? dirname}) =>
-      throw UnimplementedError('importSaveFile() not yet implemented');
+      {String? dirname}) {
+    final dirEnt = sf.getDirectory();
+    dirname ??= '/${dirEnt.name}';
 
-  Ps2SaveFile exportSaveFile(String filename) =>
-      throw UnimplementedError('exportSaveFile() not yet implemented');
+    final rootResult = pathSearch(dirname);
+    if (rootResult.dirloc == null) throw Ps2McPathNotFound(dirname);
+    if (rootResult.ent.exists) {
+      if (ignoreExisting) return false;
+      throw Ps2McIoError('directory exists', dirname);
+    }
+    final name = rootResult.ent.name;
+    final mode = dfDir | (dirEnt.mode & ~dfFile);
 
-  bool check() =>
-      throw UnimplementedError('check() not yet implemented');
+    final (dirDirloc, _) =
+        createDirEntry(rootResult.dirloc!, name, mode);
+    try {
+      assert(dirname != '/');
+      final dirPrefix = dirname.endsWith('/') ? dirname : '$dirname/';
+      for (int i = 0; i < dirEnt.length; i++) {
+        final (fileEnt, data) = sf.getFile(i);
+        final fileMode = dfFile | (fileEnt.mode & ~dfDir);
+        final (fileDirloc, _) =
+            createDirEntry(dirDirloc, fileEnt.name, fileMode);
+        final f = Ps2McFile(
+            this, fileDirloc, ps2mcFatChainEnd, 0, 'wb', dirPrefix + fileEnt.name);
+        _openFiles ??= {};
+        _openFiles![fileDirloc] = (null, {f});
+        try {
+          f.write(data);
+        } finally {
+          f.close();
+        }
+      }
+    } catch (e) {
+      // Roll back: remove files and directory.
+      try {
+        for (int i = 0; i < dirEnt.length; i++) {
+          try {
+            remove('$dirname/${sf.getFile(i).$1.name}');
+          } catch (_) {}
+        }
+        try {
+          remove(dirname);
+        } catch (_) {}
+      } catch (_) {}
+      rethrow;
+    }
+
+    // Apply timestamps/modes from the save file.
+    final innerDir = _opendirDirLoc(dirDirloc, mode: 'r+b');
+    try {
+      for (int i = 0; i < dirEnt.length; i++) {
+        innerDir.mergeEnt(i + 2, sf.getFile(i).$1);
+      }
+    } finally {
+      innerDir.close();
+    }
+
+    final rootDir = _opendirDirLoc(rootResult.dirloc!, mode: 'r+b');
+    try {
+      final merged = dirEnt.copyWith(name: null); // keep name
+      // merged.name is the save's name but we want to keep what we created.
+      rootDir.mergeEnt(dirDirloc.$2, merged);
+    } finally {
+      rootDir.close();
+    }
+
+    flush();
+    return true;
+  }
+
+  Ps2SaveFile exportSaveFile(String filename) {
+    final result = pathSearch(filename);
+    if (result.dirloc == null) throw Ps2McPathNotFound(filename);
+    if (!result.ent.exists) throw Ps2McDirNotFound(filename);
+    if (!result.isDir) throw Ps2McIoError('not a directory', filename);
+    if (result.dirloc == (0, 0)) {
+      throw Ps2McIoError("can't export root directory", filename);
+    }
+
+    final dirDirloc = result.dirloc!;
+    final dirent = result.ent;
+    final dir = _directoryByLoc(dirDirloc, dirent.fatCluster, dirent.length);
+    final files = <(PS2DirEntry, Uint8List)>[];
+
+    try {
+      for (int i = 2; i < dirent.length; i++) {
+        final ent = dir[i];
+        if (!modeIsFile(ent.mode)) {
+          stderr.writeln(
+              'warning: ${dirent.name}/${ent.name} is not a file, ignored.');
+          continue;
+        }
+        final f = Ps2McFile(
+            this, (dirent.fatCluster, i), ent.fatCluster, ent.length, 'rb', null);
+        final data = f.read(ent.length);
+        f.close();
+        assert(data.length == ent.length);
+        files.add((ent, data));
+      }
+    } finally {
+      dir.close();
+    }
+
+    final sf = Ps2SaveFile();
+    sf.setDirectory(dirent.copyWith(length: files.length));
+    for (int i = 0; i < files.length; i++) {
+      sf.setFile(i, files[i].$1, files[i].$2);
+    }
+    return sf;
+  }
+
+  bool check() {
+    final fatLen = allocatableClusterEnd;
+    final visited = List<bool>.filled(fatLen, false);
+
+    final rootRaw = _readAllocatableCluster(0);
+    final rootEnt = PS2DirEntry.unpack(rootRaw.sublist(0, ps2mcDirentLength));
+
+    bool ok = _checkDir(visited, (0, 0), '/', rootEnt);
+
+    int lostClusters = 0;
+    for (int i = 0; i < fatLen; i++) {
+      if ((lookupFat(i) & ps2mcFatAllocatedBit) != 0 && !visited[i]) {
+        stdout.write('$i ');
+        lostClusters++;
+      }
+    }
+    if (lostClusters > 0) {
+      stdout.writeln();
+      stdout.writeln('found $lostClusters lost clusters');
+      ok = false;
+    }
+    return ok;
+  }
+
+  bool _checkFile(List<bool> visited, int firstCluster, int length) {
+    int cluster = firstCluster;
+    int count = 0;
+    while (cluster != ps2mcFatChainEnd) {
+      if (cluster < 0 || cluster >= visited.length) {
+        return false; // invalid cluster
+      }
+      if (visited[cluster]) return false; // cross-linked
+      count++;
+      visited[cluster] = true;
+      final next = lookupFat(cluster);
+      if (next == ps2mcFatChainEnd) break;
+      if ((next & ps2mcFatAllocatedBit) == 0) return false; // unallocated
+      cluster = next & ~ps2mcFatAllocatedBit;
+    }
+    final fileClusterEnd = divRoundUp(length, clusterSize);
+    return count == fileClusterEnd;
+  }
+
+  bool _checkDir(List<bool> visited, _DirLoc dirloc, String dirname,
+      PS2DirEntry ent) {
+    final byteLen = ent.length * ps2mcDirentLength;
+    if (!_checkFile(visited, ent.fatCluster, byteLen)) {
+      stdout.writeln('bad directory: $dirname: bad cluster chain');
+      return false;
+    }
+    bool ret = true;
+    final firstCluster = ent.fatCluster;
+    final length = ent.length;
+    final dir = _directoryByLoc(dirloc, firstCluster, length);
+    try {
+      final dotEnt = dir[0];
+      if (dotEnt.name != '.') {
+        stdout.writeln('bad directory: $dirname: missing "." entry');
+        ret = false;
+      }
+      if (dotEnt.fatCluster != dirloc.$1 ||
+          dotEnt.parentEntry != dirloc.$2) {
+        stdout.writeln('bad directory: $dirname: bad "." entry');
+        ret = false;
+      }
+      if (dir[1].name != '..') {
+        stdout.writeln('bad directory: $dirname: missing ".." entry');
+        ret = false;
+      }
+      for (int i = 2; i < length; i++) {
+        final child = dir[i];
+        if (!child.exists) continue;
+        if (child.isDir) {
+          if (!_checkDir(visited, (firstCluster, i),
+              '$dirname${child.name}/', child)) {
+            ret = false;
+          }
+        } else {
+          if (!_checkFile(visited, child.fatCluster, child.length)) {
+            stdout.writeln('bad file: $dirname${child.name}: bad chain');
+            ret = false;
+          }
+        }
+      }
+    } finally {
+      dir.close();
+    }
+    return ret;
+  }
 
   // ---------------------------------------------------------------------------
   // Flush / close
@@ -1160,14 +1910,184 @@ class Ps2MemoryCard {
   }
 
   void writeSuperblock() {
-    throw UnimplementedError('writeSuperblock() not yet implemented');
+    final sb = _Superblock(
+      version: version,
+      pageSize: pageSize,
+      pagesPerCluster: pagesPerCluster,
+      pagesPerEraseBlock: pagesPerEraseBlock,
+      clustersPerCard: clustersPerCard,
+      allocatableClusterOffset: allocatableClusterOffset,
+      allocatableClusterEnd: allocatableClusterEnd,
+      rootdirFatCluster: rootdirFatCluster,
+      goodBlock1: goodBlock1,
+      goodBlock2: goodBlock2,
+      indirectFatClusterList: indirectFatClusterList,
+      badEraseBlockList: badEraseBlockList,
+    );
+    final raw = sb.pack();
+    final page = Uint8List(pageSize);
+    page.setRange(0, raw.length, raw);
+    _writePage(0, page);
+
+    // Erase good_block2 (write 0xFF pages).
+    final ffPage = Uint8List.fromList(List.filled(rawPageSize, 0xFF));
+    final base = goodBlock2 * pagesPerEraseBlock;
+    _f.setPositionSync(base * rawPageSize);
+    for (int i = 0; i < pagesPerEraseBlock; i++) {
+      _f.writeFromSync(ffPage);
+    }
+    modified = false;
   }
 
   void _format(List<int> params) {
-    throw UnimplementedError('format() not yet implemented');
+    final withEcc = params[0] != 0;
+    final pgSize = params[1];
+    final pagesPerEB = params[2];
+    final paramPagesPerCard = params[3];
+
+    if (pagesPerEB < 1) {
+      throw Ps2McError('invalid pages per erase block ($pagesPerEB)');
+    }
+
+    final pagesPerCard = roundDown(paramPagesPerCard, pagesPerEB);
+    const clSize = ps2mcClusterSize;
+    final ppc = clSize ~/ pgSize;
+    final clustersPerEB = pagesPerEB ~/ ppc;
+    final eraseBlocksPerCard = pagesPerCard ~/ pagesPerEB;
+    final clustersInCard = pagesPerCard ~/ ppc;
+    final epc = clSize ~/ 4;
+
+    if (pgSize < ps2mcDirentLength || ppc < 1 || ppc * pgSize != clSize) {
+      throw Ps2McError('invalid page size ($pgSize)');
+    }
+
+    final gb1 = eraseBlocksPerCard - 1;
+    final gb2 = eraseBlocksPerCard - 2;
+    final firstIfc = divRoundUp(ps2mcIndirectFatOffset, clSize);
+
+    var allocClusters = clustersInCard - (firstIfc + 2);
+    var fatClusters = divRoundUp(allocClusters, epc);
+    var indirectFatClusters = divRoundUp(fatClusters, epc);
+    if (indirectFatClusters > ps2mcMaxIndirectFatClusters) {
+      indirectFatClusters = ps2mcMaxIndirectFatClusters;
+      fatClusters = indirectFatClusters * epc;
+    }
+    allocClusters = fatClusters * epc;
+
+    final allocOffset = firstIfc + indirectFatClusters + fatClusters;
+    final allocEnd =
+        gb2 * clustersPerEB - allocOffset;
+    if (allocEnd < 1) {
+      throw Ps2McError('memory card image too small to be formatted');
+    }
+
+    final ifcList = Uint32List(ps2mcMaxIndirectFatClusters);
+    ifcList.fillRange(0, ps2mcMaxIndirectFatClusters, 0);
+    for (int i = 0; i < indirectFatClusters; i++) {
+      ifcList[i] = firstIfc + i;
+    }
+
+    version = '1.2.0.0';
+    pageSize = pgSize;
+    pagesPerCluster = ppc;
+    pagesPerEraseBlock = pagesPerEB;
+    clustersPerCard = clustersInCard;
+    allocatableClusterOffset = allocOffset;
+    allocatableClusterEnd = allocClusters;
+    rootdirFatCluster = 0;
+    goodBlock1 = gb1;
+    goodBlock2 = gb2;
+    indirectFatClusterList = ifcList;
+    badEraseBlockList = Uint32List(32)..fillRange(0, 32, 0xFFFFFFFF);
+    _calculateDerived();
+
+    ignoreEcc = !withEcc;
+    if (!withEcc) spareSize = 0;
+
+    // Write erased pages.
+    final erasedPage = Uint8List(pgSize);
+    Uint8List erasedRaw;
+    if (!withEcc) {
+      erasedRaw = erasedPage;
+    } else {
+      final eccs = eccCalculatePage(erasedPage);
+      final spare = Uint8List(spareSize);
+      for (int i = 0; i < eccs.length; i++) {
+        spare[i * 3] = eccs[i][0];
+        spare[i * 3 + 1] = eccs[i][1];
+        spare[i * 3 + 2] = eccs[i][2];
+      }
+      erasedRaw = Uint8List(rawPageSize);
+      erasedRaw.setRange(0, pgSize, erasedPage);
+      erasedRaw.setRange(pgSize, pgSize + spare.length, spare);
+    }
+    _f.setPositionSync(0);
+    for (int p = 0; p < pagesPerCard; p++) {
+      _f.writeFromSync(erasedRaw);
+    }
+    modified = true;
+
+    // Write indirect FAT clusters.
+    final firstFatCluster = firstIfc + indirectFatClusters;
+    final remainder = fatClusters % epc;
+    for (int i = 0; i < indirectFatClusters; i++) {
+      final base = firstFatCluster + i * epc;
+      final buf = Uint32List(epc);
+      for (int j = 0; j < epc; j++) buf[j] = base + j;
+      if (i == indirectFatClusters - 1 && remainder != 0) {
+        buf.fillRange(remainder, epc, 0xFFFFFFFF);
+      }
+      _writeCluster(ifcList[i], Uint8List.sublistView(buf));
+    }
+
+    // Write FAT: go backwards for better cache usage.
+    for (int i = allocClusters - 1; i >= allocEnd; i--) {
+      setFat(i, ps2mcFatChainEnd);
+    }
+    for (int i = allocEnd - 1; i > 0; i--) {
+      setFat(i, ps2mcFatClusterMask);
+    }
+    setFat(0, ps2mcFatChainEnd);
+
+    allocatableClusterEnd = allocEnd;
+
+    // Write root directory "." cluster.
+    final now = todNow();
+    final dotEnt = PS2DirEntry(
+      mode: dfRwx | dfDir | df0400 | dfExists,
+      length: 2,
+      created: now,
+      fatCluster: 0,
+      parentEntry: 0,
+      modified: now,
+      name: '.',
+    );
+    final dotData = Uint8List(clusterSize);
+    dotData.setRange(0, ps2mcDirentLength, dotEnt.pack());
+    _writeAllocatableCluster(0, dotData);
+
+    final rootDir =
+        _directoryByLoc((0, 0), 0, 2, mode: 'wb', name: '/');
+    rootDir.writeRawEnt(
+        1,
+        PS2DirEntry(
+          mode: dfWrite | dfExecute | dfDir | df0400 | dfHidden | dfExists,
+          length: 0,
+          created: now,
+          fatCluster: 0,
+          parentEntry: 0,
+          modified: now,
+          name: '..',
+        ),
+        setModified: false);
+    rootDir.close();
+
+    flush();
   }
 
   void close() {
+    if (_openFiles != null) flush();
+    if (modified) writeSuperblock();
     _rootdir?.realClose();
     _rootdir = null;
     _openFiles = null;

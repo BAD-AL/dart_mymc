@@ -1,6 +1,6 @@
 // dart_mymc.dart
 //
-// Library entry point.  run_main() mirrors mymc.py's main().
+// Library entry point.  runMain() mirrors mymc.py's main().
 
 library dart_mymc;
 
@@ -12,6 +12,7 @@ export 'src/round.dart';
 export 'src/sjistab.dart';
 
 import 'dart:io';
+
 
 import 'src/ps2mc.dart';
 import 'src/ps2mc_dir.dart';
@@ -193,6 +194,616 @@ int doCheck(String cmd, Ps2MemoryCard mc, List<String> args) {
   }
 }
 
+/// `add` — add raw files to the memory card.
+int doAdd(String cmd, Ps2MemoryCard mc, List<String> args) {
+  String? directory;
+  final files = <String>[];
+  int i = 0;
+  while (i < args.length) {
+    if ((args[i] == '-d' || args[i] == '--directory') &&
+        i + 1 < args.length) {
+      directory = args[i + 1];
+      i += 2;
+    } else {
+      files.add(args[i]);
+      i++;
+    }
+  }
+  if (files.isEmpty) {
+    stderr.writeln('$cmd: filename required.');
+    return 1;
+  }
+  if (directory != null) mc.chdir(directory);
+  int rc = 0;
+  for (final src in files) {
+    final srcFile = File(src);
+    if (!srcFile.existsSync()) {
+      stderr.writeln('$src: file not found.');
+      rc = 1;
+      continue;
+    }
+    final dest = src.split(Platform.pathSeparator).last;
+    final data = srcFile.readAsBytesSync();
+    try {
+      final f = mc.open(dest, mode: 'wb');
+      f.write(data);
+      f.close();
+    } on Ps2McError catch (e) {
+      stderr.writeln(e.toString());
+      rc = 1;
+    }
+  }
+  return rc;
+}
+
+/// `extract` — extract files from the memory card.
+int doExtract(String cmd, Ps2MemoryCard mc, List<String> args) {
+  String? directory;
+  String? outputFile;
+  bool useStdout = false;
+  final files = <String>[];
+  int i = 0;
+  while (i < args.length) {
+    if ((args[i] == '-d' || args[i] == '--directory') &&
+        i + 1 < args.length) {
+      directory = args[i + 1];
+      i += 2;
+    } else if ((args[i] == '-o' || args[i] == '--output') &&
+        i + 1 < args.length) {
+      outputFile = args[i + 1];
+      i += 2;
+    } else if (args[i] == '-p' || args[i] == '--stdout') {
+      useStdout = true;
+      i++;
+    } else {
+      files.add(args[i]);
+      i++;
+    }
+  }
+  if (files.isEmpty) {
+    stderr.writeln('$cmd: filename required.');
+    return 1;
+  }
+  if (outputFile != null && useStdout) {
+    stderr.writeln('$cmd: -o and -p are mutually exclusive.');
+    return 1;
+  }
+  if (directory != null) mc.chdir(directory);
+
+  int rc = 0;
+  for (final pattern in files) {
+    for (final filename in mc.glob(pattern)) {
+      try {
+        final f = mc.open(filename);
+        final data = f.read();
+        f.close();
+        if (useStdout) {
+          stdout.add(data);
+        } else if (outputFile != null) {
+          File(outputFile).writeAsBytesSync(data);
+        } else {
+          final dest = filename.split('/').last;
+          File(dest).writeAsBytesSync(data);
+        }
+      } on Ps2McError catch (e) {
+        stderr.writeln(e.toString());
+        rc = 1;
+      }
+    }
+  }
+  return rc;
+}
+
+/// `mkdir` — create directories.
+int doMkdir(String cmd, Ps2MemoryCard mc, List<String> args) {
+  if (args.isEmpty) {
+    stderr.writeln('$cmd: directory required.');
+    return 1;
+  }
+  int rc = 0;
+  for (final dir in args) {
+    try {
+      mc.mkdir(dir);
+    } on Ps2McError catch (e) {
+      stderr.writeln(e.toString());
+      rc = 1;
+    }
+  }
+  return rc;
+}
+
+/// `remove` — remove files and empty directories.
+int doRemove(String cmd, Ps2MemoryCard mc, List<String> args) {
+  if (args.isEmpty) {
+    stderr.writeln('$cmd: filename required.');
+    return 1;
+  }
+  int rc = 0;
+  for (final name in args) {
+    try {
+      mc.remove(name);
+    } on Ps2McError catch (e) {
+      stderr.writeln(e.toString());
+      rc = 1;
+    }
+  }
+  return rc;
+}
+
+/// `delete` — recursively delete save directories.
+int doDelete(String cmd, Ps2MemoryCard mc, List<String> args) {
+  if (args.isEmpty) {
+    stderr.writeln('$cmd: directory required.');
+    return 1;
+  }
+  int rc = 0;
+  for (final dir in args) {
+    try {
+      mc.rmdir(dir);
+    } on Ps2McError catch (e) {
+      stderr.writeln(e.toString());
+      rc = 1;
+    }
+  }
+  return rc;
+}
+
+/// `rename` — rename a file or directory.
+int doRename(String cmd, Ps2MemoryCard mc, List<String> args) {
+  if (args.length != 2) {
+    stderr.writeln('$cmd: old and new names required.');
+    return 1;
+  }
+  try {
+    mc.rename(args[0], args[1]);
+    return 0;
+  } on Ps2McError catch (e) {
+    stderr.writeln(e.toString());
+    return 1;
+  }
+}
+
+Ps2SaveFile _loadSaveFile(String filename) {
+  final f = File(filename).openSync();
+  try {
+    final header = f.readSync(16);
+    f.setPositionSync(0);
+    final ftype = detectFileType(header);
+    final sf = Ps2SaveFile();
+    if (ftype == 'psu') {
+      sf.loadEms(f);
+    } else if (ftype == 'max') {
+      sf.loadMax(f);
+    } else if (ftype == 'cbs') {
+      sf.loadCbs(f);
+    } else if (ftype == 'sps') {
+      sf.loadSps(f);
+    } else if (ftype == 'npo') {
+      throw UnsupportedError('nPort saves not supported.');
+    } else {
+      throw FormatException('Save file format not recognized: $filename');
+    }
+    return sf;
+  } finally {
+    f.closeSync();
+  }
+}
+
+/// `import` — import save files into the memory card.
+int doImport(String cmd, Ps2MemoryCard mc, List<String> args) {
+  bool ignoreExisting = false;
+  String? destDir;
+  final files = <String>[];
+  int i = 0;
+  while (i < args.length) {
+    if (args[i] == '-i' || args[i] == '--ignore-existing') {
+      ignoreExisting = true;
+      i++;
+    } else if ((args[i] == '-d' || args[i] == '--directory') &&
+        i + 1 < args.length) {
+      destDir = args[i + 1];
+      i += 2;
+    } else {
+      files.add(args[i]);
+      i++;
+    }
+  }
+  if (files.isEmpty) {
+    stderr.writeln('$cmd: filename required.');
+    return 1;
+  }
+  if (destDir != null && files.length > 1) {
+    stderr.writeln('$cmd: -d can only be used with a single save file.');
+    return 1;
+  }
+  int rc = 0;
+  for (final filename in files) {
+    try {
+      final sf = _loadSaveFile(filename);
+      final dirName =
+          destDir ?? sf.getDirectory().name;
+      stdout.writeln('Importing $filename to $dirName');
+      if (!mc.importSaveFile(sf, ignoreExisting, dirname: destDir)) {
+        stdout.writeln('$filename: already in memory card image, ignored.');
+      }
+    } on Ps2McError catch (e) {
+      stderr.writeln(e.toString());
+      rc = 1;
+    } on FormatException catch (e) {
+      stderr.writeln('$filename: ${e.message}');
+      rc = 1;
+    } on UnsupportedError catch (e) {
+      stderr.writeln('$filename: ${e.message}');
+      rc = 1;
+    }
+  }
+  return rc;
+}
+
+/// `export` — export save files from the memory card.
+int doExport(String cmd, Ps2MemoryCard mc, List<String> args) {
+  bool overwriteExisting = false;
+  bool ignoreExisting = false;
+  bool useLongnames = false;
+  String? outputFile;
+  String? destDir;
+  String type = 'psu';
+  final dirs = <String>[];
+  int i = 0;
+  while (i < args.length) {
+    if (args[i] == '-f' || args[i] == '--overwrite') {
+      overwriteExisting = true;
+      i++;
+    } else if (args[i] == '-i' || args[i] == '--ignore-existing') {
+      ignoreExisting = true;
+      i++;
+    } else if (args[i] == '-l' || args[i] == '--longnames') {
+      useLongnames = true;
+      i++;
+    } else if ((args[i] == '-o' || args[i] == '--output') &&
+        i + 1 < args.length) {
+      outputFile = args[i + 1];
+      i += 2;
+    } else if ((args[i] == '-d' || args[i] == '--directory') &&
+        i + 1 < args.length) {
+      destDir = args[i + 1];
+      i += 2;
+    } else if ((args[i] == '-t' || args[i] == '--type') &&
+        i + 1 < args.length) {
+      type = args[i + 1];
+      i += 2;
+    } else {
+      dirs.add(args[i]);
+      i++;
+    }
+  }
+  if (dirs.isEmpty) {
+    stderr.writeln('$cmd: directory name required.');
+    return 1;
+  }
+  if (overwriteExisting && ignoreExisting) {
+    stderr.writeln('$cmd: -f and -i are mutually exclusive.');
+    return 1;
+  }
+  if (outputFile != null && dirs.length > 1) {
+    stderr.writeln('$cmd: only one directory can be exported with -o.');
+    return 1;
+  }
+  if (outputFile != null && useLongnames) {
+    stderr.writeln('$cmd: -o and -l are mutually exclusive.');
+    return 1;
+  }
+
+  int rc = 0;
+  for (final dirname in dirs) {
+    for (final d in mc.glob(dirname)) {
+      try {
+        final sf = mc.exportSaveFile(d);
+        String filename;
+        if (useLongnames) {
+          final longname = sf.makeLongname(d.split('/').last);
+          filename = '$longname.$type';
+        } else {
+          filename = outputFile ?? '${d.split('/').last}.$type';
+        }
+        if (destDir != null) filename = '$destDir/$filename';
+
+        if (!overwriteExisting) {
+          if (File(filename).existsSync()) {
+            if (ignoreExisting) continue;
+            stderr.writeln('$filename: file exists.');
+            rc = 1;
+            continue;
+          }
+        }
+
+        stdout.writeln('Exporting $d to $filename');
+        final f = File(filename).openSync(mode: FileMode.write);
+        try {
+          if (type == 'psu') {
+            sf.saveEms(f);
+          } else if (type == 'max') {
+            sf.saveMax(f);
+          } else {
+            stderr.writeln('$cmd: unsupported export type: $type');
+            rc = 1;
+          }
+        } finally {
+          f.closeSync();
+        }
+      } on Ps2McError catch (e) {
+        stderr.writeln(e.toString());
+        rc = 1;
+      }
+    }
+  }
+  return rc;
+}
+
+/// `set` / `clear` — set or clear mode flags.
+int doSetMode(String cmd, Ps2MemoryCard mc, List<String> args, bool setting) {
+  int setMask = 0;
+  int clearMask = ~0;
+  String? hexValue;
+  final files = <String>[];
+
+  int i = 0;
+  while (i < args.length) {
+    final a = args[i];
+    if (a == '-r' || a == '--read') {
+      if (setting) setMask |= dfRead; else clearMask ^= dfRead;
+    } else if (a == '-w' || a == '--write') {
+      if (setting) setMask |= dfWrite; else clearMask ^= dfWrite;
+    } else if (a == '-x' || a == '--execute') {
+      if (setting) setMask |= dfExecute; else clearMask ^= dfExecute;
+    } else if (a == '-p' || a == '--protected') {
+      if (setting) setMask |= dfProtected; else clearMask ^= dfProtected;
+    } else if (a == '-s' || a == '--psx') {
+      if (setting) setMask |= dfPsx; else clearMask ^= dfPsx;
+    } else if (a == '-k' || a == '--pocketstation') {
+      if (setting) setMask |= dfPocketstn; else clearMask ^= dfPocketstn;
+    } else if (a == '-H' || a == '--hidden') {
+      if (setting) setMask |= dfHidden; else clearMask ^= dfHidden;
+    } else if ((a == '-X' || a == '--hex') && i + 1 < args.length) {
+      hexValue = args[i + 1];
+      i++;
+    } else if (!a.startsWith('-')) {
+      files.add(a);
+    }
+    i++;
+  }
+
+  if (setMask == 0 && clearMask == ~0 && hexValue == null) {
+    stderr.writeln('$cmd: at least one option must be given.');
+    return 1;
+  }
+  if (hexValue != null && (setMask != 0 || clearMask != ~0)) {
+    stderr.writeln("$cmd: -X can't be combined with other options.");
+    return 1;
+  }
+  int? rawValue;
+  if (hexValue != null) {
+    final h = hexValue.startsWith('0x') || hexValue.startsWith('0X')
+        ? hexValue.substring(2)
+        : hexValue;
+    rawValue = int.tryParse(h, radix: 16);
+    if (rawValue == null) {
+      stderr.writeln('$cmd: invalid hex value: $hexValue');
+      return 1;
+    }
+  }
+
+  int rc = 0;
+  for (final pattern in files) {
+    for (final filename in mc.glob(pattern)) {
+      try {
+        final ent = mc.getDirent(filename);
+        if (rawValue != null) {
+          ent.mode = rawValue;
+        } else {
+          ent.mode = (ent.mode & clearMask) | setMask;
+        }
+        mc.setDirent(filename, ent);
+      } on Ps2McError catch (e) {
+        stderr.writeln(e.toString());
+        rc = 1;
+      }
+    }
+  }
+  return rc;
+}
+
+/// `format` — create a new memory card image.
+int doFormat(String cmd, String mcPath, List<String> args) {
+  bool noEcc = false;
+  bool overwrite = false;
+  int? clusters;
+  int i = 0;
+  while (i < args.length) {
+    if (args[i] == '-e' || args[i] == '--no-ecc') {
+      noEcc = true;
+    } else if (args[i] == '-f' || args[i] == '--overwrite') {
+      overwrite = true;
+    } else if ((args[i] == '-c' || args[i] == '--clusters') &&
+        i + 1 < args.length) {
+      clusters = int.tryParse(args[i + 1]);
+      if (clusters == null) {
+        stderr.writeln('$cmd: invalid cluster count: ${args[i + 1]}');
+        return 1;
+      }
+      i++;
+    }
+    i++;
+  }
+
+  int pagesPerCard = ps2mcStandardPagesPerCard;
+  if (clusters != null) {
+    const ppc = ps2mcClusterSize ~/ ps2mcStandardPageSize;
+    pagesPerCard = clusters * ppc;
+  }
+
+  if (!overwrite && File(mcPath).existsSync()) {
+    stderr.writeln('$mcPath: file exists.');
+    return 1;
+  }
+
+  try {
+    final mc = Ps2MemoryCard(mcPath,
+        formatParams: [
+          noEcc ? 0 : 1,
+          ps2mcStandardPageSize,
+          ps2mcStandardPagesPerEraseBlock,
+          pagesPerCard,
+        ]);
+    mc.close();
+    return 0;
+  } on Ps2McError catch (e) {
+    stderr.writeln(e.toString());
+    return 1;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// create — create a new .ps2 card pre-loaded with one or more save files.
+// Usage: dart_mymc <new.ps2> create [-f] <save.(psu|max|sps|cbs)> [...]
+// ---------------------------------------------------------------------------
+
+int doCreate(String cmd, String mcPath, List<String> args) {
+  bool overwrite = false;
+  final files = <String>[];
+  for (final a in args) {
+    if (a == '-f' || a == '--overwrite-existing') {
+      overwrite = true;
+    } else {
+      files.add(a);
+    }
+  }
+  if (files.isEmpty) {
+    stderr.writeln('$cmd: save file required.');
+    return 1;
+  }
+
+  if (!overwrite && File(mcPath).existsSync()) {
+    stderr.writeln('$mcPath: file exists.');
+    return 1;
+  }
+
+  // Load all save files first so we fail before touching the card.
+  final saves = <Ps2SaveFile>[];
+  for (final filename in files) {
+    try {
+      saves.add(_loadSaveFile(filename));
+    } on FormatException catch (e) {
+      stderr.writeln('$filename: ${e.message}');
+      return 1;
+    } on UnsupportedError catch (e) {
+      stderr.writeln('$filename: ${e.message}');
+      return 1;
+    }
+  }
+
+  try {
+    final mc = Ps2MemoryCard(mcPath, formatParams: [
+      1,
+      ps2mcStandardPageSize,
+      ps2mcStandardPagesPerEraseBlock,
+      ps2mcStandardPagesPerCard,
+    ]);
+    try {
+      for (int i = 0; i < files.length; i++) {
+        final dirname = saves[i].getDirectory().name;
+        stdout.writeln('Importing ${files[i]} to $dirname');
+        mc.importSaveFile(saves[i], false);
+      }
+    } finally {
+      mc.close();
+    }
+  } on Ps2McError catch (e) {
+    stderr.writeln(e.toString());
+    return 1;
+  }
+  return 0;
+}
+
+// ---------------------------------------------------------------------------
+// convert — convert a save file between formats (no memory card needed).
+// Usage: dart_mymc convert [-f] <input.(psu|max|sps|cbs)> <output.(psu|max|sps|cbs)>
+// ---------------------------------------------------------------------------
+
+/// Infer the save-file format string ('psu','max','sps','cbs') from extension.
+String? _typeFromExtension(String path) {
+  final ext = path.toLowerCase();
+  if (ext.endsWith('.psu')) return 'psu';
+  if (ext.endsWith('.max')) return 'max';
+  if (ext.endsWith('.sps')) return 'sps';
+  if (ext.endsWith('.cbs')) return 'cbs';
+  return null;
+}
+
+int doConvert(List<String> args) {
+  bool overwrite = false;
+  final positional = <String>[];
+  for (final a in args) {
+    if (a == '-f' || a == '--overwrite-existing') {
+      overwrite = true;
+    } else {
+      positional.add(a);
+    }
+  }
+
+  if (positional.length != 2) {
+    stderr.writeln('convert: usage: dart_mymc convert [-f] <input> <output>');
+    return 1;
+  }
+
+  final inputPath = positional[0];
+  final outputPath = positional[1];
+
+  final outType = _typeFromExtension(outputPath);
+  if (outType == null) {
+    stderr.writeln('convert: cannot determine output format from extension: $outputPath');
+    return 1;
+  }
+
+  if (!overwrite && File(outputPath).existsSync()) {
+    stderr.writeln('$outputPath: file exists.');
+    return 1;
+  }
+
+  final Ps2SaveFile sf;
+  try {
+    sf = _loadSaveFile(inputPath);
+  } on FormatException catch (e) {
+    stderr.writeln('$inputPath: ${e.message}');
+    return 1;
+  } on UnsupportedError catch (e) {
+    stderr.writeln('$inputPath: ${e.message}');
+    return 1;
+  }
+
+  final f = File(outputPath).openSync(mode: FileMode.write);
+  try {
+    stdout.writeln('Converting $inputPath to $outputPath');
+    if (outType == 'psu') {
+      sf.saveEms(f);
+    } else if (outType == 'max') {
+      sf.saveMax(f);
+    } else if (outType == 'sps') {
+      sf.saveSps(f);
+    } else if (outType == 'cbs') {
+      sf.saveCbs(f);
+    }
+  } on UnimplementedError catch (e) {
+    f.closeSync();
+    File(outputPath).deleteSync();
+    stderr.writeln('convert: $e');
+    return 1;
+  } finally {
+    f.closeSync();
+  }
+  return 0;
+}
+
 // ---------------------------------------------------------------------------
 // Option parsing helpers
 // ---------------------------------------------------------------------------
@@ -221,7 +832,12 @@ _ParsedArgs _parseArgs(List<String> argv) {
   int i = 0;
   while (i < argv.length) {
     final arg = argv[i];
-    if (arg == '--ignore-ecc' || arg == '-i') {
+    // Stop processing global flags once we have a positional argument (mcPath).
+    // Everything from the first non-flag arg onward goes into rest as-is;
+    // sub-command options (e.g. -o, -d) are handled by their own parsers.
+    if (rest.isNotEmpty) {
+      rest.add(arg);
+    } else if (arg == '--ignore-ecc' || arg == '-i') {
       ignoreEcc = true;
     } else if (arg == '-D') {
       debug = true;
@@ -281,6 +897,8 @@ const _commandDescriptions = {
   'add': 'Add files to the memory card.',
   'check': 'Check for file system errors.',
   'clear': 'Clear mode flags on files and directories',
+  'convert': 'Convert a save file between formats (.psu/.max/.sps/.cbs).',
+  'create': 'Create a new memory card pre-loaded with a save file.',
   'delete': 'Recursively delete a directory (save file).',
   'df': 'Display the amount free space.',
   'dir': 'Display save file information.',
@@ -313,8 +931,16 @@ int runMain(List<String> arguments) {
 
   // Commands that do not need to open the memory card image.
   if (cmd == 'format') {
-    stderr.writeln('format: not yet implemented.');
-    return 1;
+    return doFormat(cmd, mcPath, subArgs);
+  }
+  if (cmd == 'create') {
+    return doCreate(cmd, mcPath, subArgs);
+  }
+
+  // 'convert' takes no memory card — argv is: dart_mymc convert <in> <out>
+  // The parser slots the word 'convert' into mcPath and <in> into cmd.
+  if (mcPath == 'convert') {
+    return doConvert([cmd, ...subArgs]);
   }
 
   Ps2MemoryCard? mc;
@@ -344,17 +970,34 @@ int runMain(List<String> arguments) {
         return doCheck(cmd, mc, subArgs);
 
       case 'add':
+        return doAdd(cmd, mc, subArgs);
+
       case 'extract':
+        return doExtract(cmd, mc, subArgs);
+
       case 'mkdir':
+        return doMkdir(cmd, mc, subArgs);
+
       case 'remove':
+        return doRemove(cmd, mc, subArgs);
+
       case 'import':
+        return doImport(cmd, mc, subArgs);
+
       case 'export':
+        return doExport(cmd, mc, subArgs);
+
       case 'delete':
+        return doDelete(cmd, mc, subArgs);
+
       case 'set':
+        return doSetMode(cmd, mc, subArgs, true);
+
       case 'clear':
+        return doSetMode(cmd, mc, subArgs, false);
+
       case 'rename':
-        stderr.writeln('$cmd: not yet implemented.');
-        return 1;
+        return doRename(cmd, mc, subArgs);
 
       default:
         stderr.writeln('Command "$cmd" not recognized.');
