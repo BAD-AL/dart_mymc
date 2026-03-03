@@ -127,15 +127,16 @@ Browser / WASM support is a future concern; desktop OS is the current target.
 
 **Goal:** Systematic verification of Dart vs Python output for every command.
 
-- [ ] Cross-validate `ls`, `dir`, `df` output character-for-character against Python
-- [ ] Cross-validate exported `.psu` byte-for-byte against Python (`mymc.py export`)
-- [ ] Cross-validate exported `.max` byte-for-byte against Python
-- [ ] Test `.cbs` and `.sps` import against real save files (need test data)
-- [ ] `saveSps` / `saveCbs` produce files loadable by original Python
-- [ ] `--ignore-ecc` / `-i` flag wired through to `Ps2MemoryCard`
-- [ ] `--version` flag prints version string
-- [ ] Error messages match Python originals (non-critical)
-- [ ] `dart_mymc help <command>` per-command help text
+- [x] `ls` output — character-for-character identical to Python
+- [x] `df` output — identical to Python
+- [x] `dir` output — identical to Python (fixed Shift-JIS 0x81xx punctuation decode)
+- [x] Exported `.psu` — byte-for-byte identical to Python
+- [x] Exported `.max` — byte-for-byte identical to Python
+- [x] `--ignore-ecc` / `-i` flag — already wired through to `Ps2MemoryCard`
+- [x] `--version` flag — already works
+- [x] `dart_mymc help <command>` — per-command help text
+- [ ] `.cbs` and `.sps` import test against real save files (blocked: no test data)
+- [ ] `saveSps` / `saveCbs` writers (blocked: no test data / Python reference)
 
 ---
 

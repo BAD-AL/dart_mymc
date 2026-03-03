@@ -893,6 +893,186 @@ void _printHelp() {
   stdout.writeln('  -i, --ignore-ecc  Ignore ECC errors while reading.');
 }
 
+void _printCommandHelp(String cmd) {
+  final text = _commandHelp[cmd];
+  if (text == null) {
+    stderr.writeln('No help available for "$cmd".');
+  } else {
+    stdout.writeln(text);
+  }
+}
+
+const _commandHelp = {
+  'add': '''Usage: dart_mymc memcard.ps2 add [options] filename ...
+
+Add files to the memory card.
+
+Options:
+  -d DIRECTORY, --directory=DIRECTORY
+                        Add files to "directory".
+  -h, --help            show this help message and exit''',
+
+  'check': '''Usage: dart_mymc memcard.ps2 check
+
+Check for file system errors.
+
+Options:
+  -h, --help  show this help message and exit''',
+
+  'clear': '''Usage: dart_mymc memcard.ps2 clear [options] filename ...
+
+Clear mode flags on files and directories
+
+Options:
+  -p, --protected      Clear copy protected flag
+  -P, --psx            Clear PSX flag
+  -K, --pocketstation  Clear PocketStation flag
+  -H, --hidden         Clear hidden flag
+  -r, --read           Clear read allowed flag
+  -w, --write          Clear write allowed flag
+  -x, --execute        Clear executable flag
+  -h, --help           show this help message and exit''',
+
+  'convert': '''Usage: dart_mymc convert [-f] input output
+
+Convert a save file between formats (.psu, .max, .sps, .cbs).
+The output format is inferred from the output file extension.
+
+Options:
+  -f, --overwrite-existing
+                        Overwrite output file if it already exists.
+  -h, --help            show this help message and exit''',
+
+  'create': '''Usage: dart_mymc new.ps2 create [-f] savefile ...
+
+Create a new memory card image pre-loaded with one or more save files.
+Supported input formats: .psu, .max, .sps, .cbs.
+
+Options:
+  -f, --overwrite-existing
+                        Overwrite the card image if it already exists.
+  -h, --help            show this help message and exit''',
+
+  'delete': '''Usage: dart_mymc memcard.ps2 delete dirname ...
+
+Recursively delete a directory (save file).
+
+Options:
+  -h, --help  show this help message and exit''',
+
+  'df': '''Usage: dart_mymc memcard.ps2 df
+
+Display the amount free space.
+
+Options:
+  -h, --help  show this help message and exit''',
+
+  'dir': '''Usage: dart_mymc memcard.ps2 dir
+
+Display save file information.
+
+Options:
+  -h, --help  show this help message and exit''',
+
+  'export': '''Usage: dart_mymc memcard.ps2 export [options] directory ...
+
+Export save files from the memory card.
+
+Options:
+  -f, --overwrite-existing
+                        Overwrite any save files already exported.
+  -i, --ignore-existing
+                        Ignore any save files already exported.
+  -o filename, --output-file=filename
+                        Use "filename" as the name of the save file.
+  -d directory, --directory=directory
+                        Export save files to "directory".
+  -l, --longnames       Generate longer, more descriptive, filenames.
+  -t type, --type=type  Output format: psu (default) or max.
+  -h, --help            show this help message and exit''',
+
+  'extract': '''Usage: dart_mymc memcard.ps2 extract [options] filename ...
+
+Extract files from the memory card.
+
+Options:
+  -o FILE, --output=FILE
+                        Extract file to "FILE".
+  -d DIRECTORY, --directory=DIRECTORY
+                        Extract files from "DIRECTORY".
+  -p, --use-stdout      Extract files to standard output.
+  -h, --help            show this help message and exit''',
+
+  'format': '''Usage: dart_mymc memcard.ps2 format [options]
+
+Creates a new memory card image.
+
+Options:
+  -c CLUSTERS, --clusters=CLUSTERS
+                        Size in clusters of the memory card.
+  -f, --overwrite-existing
+                        Overwrite any existing file.
+  -e, --no-ecc          Create an image without ECC.
+  -h, --help            show this help message and exit''',
+
+  'import': '''Usage: dart_mymc memcard.ps2 import [options] savefile ...
+
+Import save files into the memory card.
+Supported formats: .psu, .max, .sps, .cbs.
+
+Options:
+  -i, --ignore-existing
+                        Ignore files that already exist on the image.
+  -d DEST, --directory=DEST
+                        Import to "DEST".
+  -h, --help            show this help message and exit''',
+
+  'ls': '''Usage: dart_mymc memcard.ps2 ls [options] [directory ...]
+
+List the contents of a directory.
+
+Options:
+  -c, --creation-time  Display creation times.
+  -h, --help           show this help message and exit''',
+
+  'mkdir': '''Usage: dart_mymc memcard.ps2 mkdir directory ...
+
+Make directories.
+
+Options:
+  -h, --help  show this help message and exit''',
+
+  'remove': '''Usage: dart_mymc memcard.ps2 remove filename ...
+
+Remove files and directories.
+
+Options:
+  -h, --help  show this help message and exit''',
+
+  'rename': '''Usage: dart_mymc memcard.ps2 rename oldname newname
+
+Rename a file or directory.
+
+Options:
+  -h, --help  show this help message and exit''',
+
+  'set': '''Usage: dart_mymc memcard.ps2 set [options] filename ...
+
+Set mode flags on files and directories.
+
+Options:
+  -p, --protected       Set copy protected flag
+  -P, --psx             Set PSX flag
+  -K, --pocketstation   Set PocketStation flag
+  -H, --hidden          Set hidden flag
+  -r, --read            Set read allowed flag
+  -w, --write           Set write allowed flag
+  -x, --execute         Set executable flag
+  -X mode, --hex-value=mode
+                        Set mode to "mode".
+  -h, --help            show this help message and exit''',
+};
+
 const _commandDescriptions = {
   'add': 'Add files to the memory card.',
   'check': 'Check for file system errors.',
@@ -928,6 +1108,18 @@ int runMain(List<String> arguments) {
   final mcPath = parsed.mcPath!;
   final cmd = parsed.command!;
   final subArgs = parsed.subArgs;
+
+  // 'dart_mymc help <command>' — no memory card needed.
+  if (mcPath == 'help') {
+    _printCommandHelp(cmd);
+    return 0;
+  }
+
+  // Per-command --help / -h flag.
+  if (subArgs.contains('--help') || subArgs.contains('-h')) {
+    _printCommandHelp(cmd);
+    return 0;
+  }
 
   // Commands that do not need to open the memory card image.
   if (cmd == 'format') {
