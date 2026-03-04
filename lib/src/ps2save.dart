@@ -3,9 +3,10 @@
 // Ported from ps2save.py by Ross Ridge (Public Domain)
 // A simple interface for working with various PS2 save file formats.
 
-import 'dart:io';
+import 'dart:io' show ZLibDecoder;
 import 'dart:typed_data';
 import 'lzari.dart';
+import 'ps2card_io.dart';
 import 'ps2mc_dir.dart';
 import 'round.dart';
 import 'sjistab.dart';
@@ -411,10 +412,10 @@ class Ps2SaveFile {
   // ---------------------------------------------------------------------------
 
   /// Load a PSU (.psu / EMS) save file from [f].
-  void loadEms(RandomAccessFile f) {
-    final direntBytes = f.readSync(ps2mcDirentLength);
-    final dotBytes = f.readSync(ps2mcDirentLength);
-    final dotdotBytes = f.readSync(ps2mcDirentLength);
+  void loadEms(SaveIo f) {
+    final direntBytes = f.read(ps2mcDirentLength);
+    final dotBytes = f.read(ps2mcDirentLength);
+    final dotdotBytes = f.read(ps2mcDirentLength);
     if (direntBytes.length != ps2mcDirentLength ||
         dotBytes.length != ps2mcDirentLength ||
         dotdotBytes.length != ps2mcDirentLength) {
@@ -435,7 +436,7 @@ class Ps2SaveFile {
 
     const clusterSize = 1024;
     for (int i = 0; i < fileCount; i++) {
-      final entBytes = f.readSync(ps2mcDirentLength);
+      final entBytes = f.read(ps2mcDirentLength);
       if (entBytes.length != ps2mcDirentLength) {
         throw FormatException('PSU file truncated at file entry $i');
       }
@@ -444,24 +445,24 @@ class Ps2SaveFile {
         throw FormatException('PSU file has a subdirectory (not supported)');
       }
       final flen = ent.length;
-      final data = f.readSync(flen);
+      final data = f.read(flen);
       if (data.length != flen) {
         throw FormatException('PSU file truncated at file data $i');
       }
       // Skip padding to next cluster boundary.
       final pad = roundUp(flen, clusterSize) - flen;
-      if (pad > 0) f.readSync(pad);
+      if (pad > 0) f.read(pad);
       setFile(i, ent, data);
     }
   }
 
   /// Write the save file in PSU (.psu / EMS) format to [f].
-  void saveEms(RandomAccessFile f) {
+  void saveEms(SaveIo f) {
     const clusterSize = 1024;
     final dirent = getDirectory();
     final dirWithDots = dirent.copyWith(length: dirent.length + 2);
-    f.writeFromSync(dirWithDots.pack());
-    f.writeFromSync(PS2DirEntry(
+    f.write(dirWithDots.pack());
+    f.write(PS2DirEntry(
       mode: dfRwx | dfDir | df0400 | dfExists,
       length: 0,
       created: dirent.created,
@@ -470,7 +471,7 @@ class Ps2SaveFile {
       modified: dirent.created,
       name: '.',
     ).pack());
-    f.writeFromSync(PS2DirEntry(
+    f.write(PS2DirEntry(
       mode: dfRwx | dfDir | df0400 | dfExists,
       length: 0,
       created: dirent.created,
@@ -485,12 +486,12 @@ class Ps2SaveFile {
       if (!modeIsFile(ent.mode)) {
         throw StateError('Directory has a subdirectory.');
       }
-      f.writeFromSync(ent.pack());
-      f.writeFromSync(data);
+      f.write(ent.pack());
+      f.write(data);
       final pad = roundUp(data.length, clusterSize) - data.length;
-      if (pad > 0) f.writeFromSync(Uint8List(pad));
+      if (pad > 0) f.write(Uint8List(pad));
     }
-    f.flushSync();
+    f.flush();
   }
 }
 
@@ -569,13 +570,13 @@ Uint8List _rc4Crypt(List<int> s, Uint8List t) {
   return out;
 }
 
-Uint8List _readFixed(RandomAccessFile f, int n) {
-  final data = f.readSync(n);
+Uint8List _readFixed(SaveIo f, int n) {
+  final data = f.read(n);
   if (data.length != n) throw FormatException('Save file truncated');
   return data;
 }
 
-Uint8List _readLongString(RandomAccessFile f) {
+Uint8List _readLongString(SaveIo f) {
   final lenBytes = _readFixed(f, 4);
   final len = ByteData.sublistView(lenBytes).getUint32(0, Endian.little);
   return _readFixed(f, len);
@@ -590,7 +591,7 @@ extension Ps2SaveFileFormats on Ps2SaveFile {
   /// Header: magic(12) + crc(4) + dirname(32) + iconsysname(32) +
   ///         clen(4) + dirlen(4) + length(4) = 92 bytes.
   /// Body: LZARI-compressed file entries.
-  void loadMax(RandomAccessFile f, [PS2Tod? timestamp]) {
+  void loadMax(SaveIo f, [PS2Tod? timestamp]) {
     final hdr = _readFixed(f, 0x5C); // 92 bytes
     final magic = String.fromCharCodes(hdr.sublist(0, 12));
     if (magic != ps2saveMaxMagic) {
@@ -608,9 +609,9 @@ extension Ps2SaveFileFormats on Ps2SaveFile {
     // clen == uncompLen: some files incorrectly store uncompressed size as clen
     final Uint8List body;
     if (clen == uncompLen) {
-      final pos = f.positionSync();
-      final remaining = f.lengthSync() - pos;
-      body = f.readSync(remaining);
+      final pos = f.position();
+      final remaining = f.length() - pos;
+      body = f.read(remaining);
     } else {
       body = _readFixed(f, clen - 4);
     }
@@ -660,7 +661,7 @@ extension Ps2SaveFileFormats on Ps2SaveFile {
   }
 
   /// Write the save file in MAX Drive format to [f].
-  void saveMax(RandomAccessFile f) {
+  void saveMax(SaveIo f) {
     final dirent = getDirectory();
 
     // Build uncompressed body: for each file: uint32 size + 32-byte name + data,
@@ -718,9 +719,9 @@ extension Ps2SaveFileFormats on Ps2SaveFile {
     crc = _crc32(compressed, crc);
     hdrBd.setUint32(12, crc & 0xFFFFFFFF, Endian.little);
 
-    f.writeFromSync(hdr);
-    f.writeFromSync(compressed);
-    f.flushSync();
+    f.write(hdr);
+    f.write(compressed);
+    f.flush();
   }
 
   // ---------------------------------------------------------------------------
@@ -729,7 +730,7 @@ extension Ps2SaveFileFormats on Ps2SaveFile {
 
   /// Load a SharkPort (.sps / .xps) save file from [f].
   /// Magic: \x0D\x00\x00\x00SharkPortSave (17 bytes).
-  void loadSps(RandomAccessFile f) {
+  void loadSps(SaveIo f) {
     // Magic already consumed by detectFileType caller; re-read from position 0
     // (caller seeks to 0 before calling us, so read fresh).
     final magic = _readFixed(f, 17);
@@ -825,7 +826,7 @@ extension Ps2SaveFileFormats on Ps2SaveFile {
 
   /// Load a CodeBreaker (.cbs) save file from [f].
   /// Magic: CFU\x00 (4 bytes), followed by RC4-encrypted, zlib-compressed body.
-  void loadCbs(RandomAccessFile f) {
+  void loadCbs(SaveIo f) {
     final magic = _readFixed(f, 4);
     if (String.fromCharCodes(magic) != ps2saveCbsMagic) {
       throw FormatException('Not a CodeBreaker save file');
@@ -859,7 +860,7 @@ extension Ps2SaveFileFormats on Ps2SaveFile {
         modified.year == 0 ? todNow() : modified;
 
     // Body: RC4 decrypt then zlib decompress
-    final rawBody = f.readSync(flen);
+    final rawBody = f.read(flen);
     if (rawBody.length != flen && rawBody.length != flen - hlen) {
       throw FormatException('CBS file truncated');
     }
@@ -926,7 +927,7 @@ extension Ps2SaveFileFormats on Ps2SaveFile {
   // SharkPort / X-Port (.sps) writer — Phase 5
   // ---------------------------------------------------------------------------
 
-  void saveSps(RandomAccessFile f) {
+  void saveSps(SaveIo f) {
     throw UnimplementedError('saveSps not yet implemented');
   }
 
@@ -934,7 +935,7 @@ extension Ps2SaveFileFormats on Ps2SaveFile {
   // CodeBreaker (.cbs) writer — Phase 5
   // ---------------------------------------------------------------------------
 
-  void saveCbs(RandomAccessFile f) {
+  void saveCbs(SaveIo f) {
     throw UnimplementedError('saveCbs not yet implemented');
   }
 }

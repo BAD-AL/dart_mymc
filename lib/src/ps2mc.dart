@@ -4,7 +4,6 @@
 // Manipulate PS2 memory card images.
 
 import 'dart:collection';
-import 'dart:io';
 import 'dart:typed_data';
 
 import 'ps2card_io.dart';
@@ -633,10 +632,7 @@ class Ps2MemoryCard {
   /// Open or create a card from a file path.
   factory Ps2MemoryCard(String path,
       {bool ignoreEcc = false, List<int>? formatParams}) {
-    // FileMode.write  → O_RDWR | O_CREAT | O_TRUNC  (new card)
-    // FileMode.append → O_RDWR | O_CREAT (no truncate) (existing card, read-write)
-    final mode = formatParams != null ? FileMode.write : FileMode.append;
-    final io = FileCardIo(File(path).openSync(mode: mode));
+    final io = FileCardIo.fromPath(path, creating: formatParams != null);
     return Ps2MemoryCard.fromIo(io,
         filePath: path, ignoreEcc: ignoreEcc, formatParams: formatParams);
   }
@@ -1782,7 +1778,8 @@ class Ps2MemoryCard {
     return true;
   }
 
-  Ps2SaveFile exportSaveFile(String filename) {
+  Ps2SaveFile exportSaveFile(String filename,
+      {void Function(String)? onWarning}) {
     final result = pathSearch(filename);
     if (result.dirloc == null) throw Ps2McPathNotFound(filename);
     if (!result.ent.exists) throw Ps2McDirNotFound(filename);
@@ -1800,7 +1797,7 @@ class Ps2MemoryCard {
       for (int i = 2; i < dirent.length; i++) {
         final ent = dir[i];
         if (!modeIsFile(ent.mode)) {
-          stderr.writeln(
+          onWarning?.call(
               'warning: ${dirent.name}/${ent.name} is not a file, ignored.');
           continue;
         }
@@ -1823,25 +1820,26 @@ class Ps2MemoryCard {
     return sf;
   }
 
-  bool check() {
+  bool check({void Function(String)? onMessage}) {
     final fatLen = allocatableClusterEnd;
     final visited = List<bool>.filled(fatLen, false);
 
     final rootRaw = _readAllocatableCluster(0);
     final rootEnt = PS2DirEntry.unpack(rootRaw.sublist(0, ps2mcDirentLength));
 
-    bool ok = _checkDir(visited, (0, 0), '/', rootEnt);
+    bool ok = _checkDir(visited, (0, 0), '/', rootEnt, onMessage);
 
     int lostClusters = 0;
+    final lost = StringBuffer();
     for (int i = 0; i < fatLen; i++) {
       if ((lookupFat(i) & ps2mcFatAllocatedBit) != 0 && !visited[i]) {
-        stdout.write('$i ');
+        lost.write('$i ');
         lostClusters++;
       }
     }
     if (lostClusters > 0) {
-      stdout.writeln();
-      stdout.writeln('found $lostClusters lost clusters');
+      onMessage?.call(lost.toString().trim());
+      onMessage?.call('found $lostClusters lost clusters');
       ok = false;
     }
     return ok;
@@ -1867,10 +1865,10 @@ class Ps2MemoryCard {
   }
 
   bool _checkDir(List<bool> visited, _DirLoc dirloc, String dirname,
-      PS2DirEntry ent) {
+      PS2DirEntry ent, void Function(String)? onMessage) {
     final byteLen = ent.length * ps2mcDirentLength;
     if (!_checkFile(visited, ent.fatCluster, byteLen)) {
-      stdout.writeln('bad directory: $dirname: bad cluster chain');
+      onMessage?.call('bad directory: $dirname: bad cluster chain');
       return false;
     }
     bool ret = true;
@@ -1880,16 +1878,16 @@ class Ps2MemoryCard {
     try {
       final dotEnt = dir[0];
       if (dotEnt.name != '.') {
-        stdout.writeln('bad directory: $dirname: missing "." entry');
+        onMessage?.call('bad directory: $dirname: missing "." entry');
         ret = false;
       }
       if (dotEnt.fatCluster != dirloc.$1 ||
           dotEnt.parentEntry != dirloc.$2) {
-        stdout.writeln('bad directory: $dirname: bad "." entry');
+        onMessage?.call('bad directory: $dirname: bad "." entry');
         ret = false;
       }
       if (dir[1].name != '..') {
-        stdout.writeln('bad directory: $dirname: missing ".." entry');
+        onMessage?.call('bad directory: $dirname: missing ".." entry');
         ret = false;
       }
       for (int i = 2; i < length; i++) {
@@ -1897,12 +1895,12 @@ class Ps2MemoryCard {
         if (!child.exists) continue;
         if (child.isDir) {
           if (!_checkDir(visited, (firstCluster, i),
-              '$dirname${child.name}/', child)) {
+              '$dirname${child.name}/', child, onMessage)) {
             ret = false;
           }
         } else {
           if (!_checkFile(visited, child.fatCluster, child.length)) {
-            stdout.writeln('bad file: $dirname${child.name}: bad chain');
+            onMessage?.call('bad file: $dirname${child.name}: bad chain');
             ret = false;
           }
         }

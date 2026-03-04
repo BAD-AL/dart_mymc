@@ -434,15 +434,15 @@ void main() {
       mc.close();
 
       final psuPath = p.join(tmpDir.path, 'NFL2K16.psu');
-      final wf = File(psuPath).openSync(mode: FileMode.write);
-      sf.saveEms(wf);
-      wf.closeSync();
+      final wraf = File(psuPath).openSync(mode: FileMode.write);
+      sf.saveEms(FileSaveIo(wraf));
+      wraf.closeSync();
 
       // Load it back.
       final sf2 = Ps2SaveFile();
-      final rf = File(psuPath).openSync();
-      sf2.loadEms(rf);
-      rf.closeSync();
+      final rraf = File(psuPath).openSync();
+      sf2.loadEms(FileSaveIo(rraf));
+      rraf.closeSync();
 
       expect(sf2.getDirectory().name, equals(sf.getDirectory().name));
       expect(sf2.getDirectory().length, equals(sf.getDirectory().length));
@@ -563,34 +563,34 @@ void main() {
     const String maxFile = 'test/test_files/NFL2K16.max';
 
     test('loadMax reads directory name correctly', () {
-      final f = File(maxFile).openSync();
+      final raf = File(maxFile).openSync();
       final sf = Ps2SaveFile();
       try {
-        sf.loadMax(f);
+        sf.loadMax(FileSaveIo(raf));
       } finally {
-        f.closeSync();
+        raf.closeSync();
       }
       expect(sf.getDirectory().name, equals('BASLUS-20919NFL2K16'));
     });
 
     test('loadMax reads correct file count', () {
-      final f = File(maxFile).openSync();
+      final raf = File(maxFile).openSync();
       final sf = Ps2SaveFile();
       try {
-        sf.loadMax(f);
+        sf.loadMax(FileSaveIo(raf));
       } finally {
-        f.closeSync();
+        raf.closeSync();
       }
       expect(sf.getDirectory().length, equals(5));
     });
 
     test('loadMax icon.sys title is "ESPN NFL 2K5"', () {
-      final f = File(maxFile).openSync();
+      final raf = File(maxFile).openSync();
       final sf = Ps2SaveFile();
       try {
-        sf.loadMax(f);
+        sf.loadMax(FileSaveIo(raf));
       } finally {
-        f.closeSync();
+        raf.closeSync();
       }
       final iconSys = sf.getIconSys();
       expect(iconSys, isNotNull);
@@ -603,30 +603,30 @@ void main() {
       tmpDir = Directory.systemTemp.createTempSync('dart_mymc_max_');
       try {
         // Load original
-        final f1 = File(maxFile).openSync();
+        final raf1 = File(maxFile).openSync();
         final sf1 = Ps2SaveFile();
         try {
-          sf1.loadMax(f1);
+          sf1.loadMax(FileSaveIo(raf1));
         } finally {
-          f1.closeSync();
+          raf1.closeSync();
         }
 
         // Save as MAX
         final outPath = p.join(tmpDir.path, 'test.max');
-        final wf = File(outPath).openSync(mode: FileMode.write);
+        final wraf = File(outPath).openSync(mode: FileMode.write);
         try {
-          sf1.saveMax(wf);
+          sf1.saveMax(FileSaveIo(wraf));
         } finally {
-          wf.closeSync();
+          wraf.closeSync();
         }
 
         // Reload
-        final f2 = File(outPath).openSync();
+        final raf2 = File(outPath).openSync();
         final sf2 = Ps2SaveFile();
         try {
-          sf2.loadMax(f2);
+          sf2.loadMax(FileSaveIo(raf2));
         } finally {
-          f2.closeSync();
+          raf2.closeSync();
         }
 
         // Verify directory
@@ -720,29 +720,29 @@ void main() {
     test('PSU → MAX round-trip preserves dir name, file names, and data', () {
       // Load Python-generated PSU.
       final sf1 = Ps2SaveFile();
-      final f1 = File('test/test_files/NFL2K16.psu').openSync();
+      final raf1 = File('test/test_files/NFL2K16.psu').openSync();
       try {
-        sf1.loadEms(f1);
+        sf1.loadEms(FileSaveIo(raf1));
       } finally {
-        f1.closeSync();
+        raf1.closeSync();
       }
 
       // Convert to MAX.
       final maxPath = p.join(tmpDir.path, 'converted.max');
-      final wf = File(maxPath).openSync(mode: FileMode.write);
+      final wraf = File(maxPath).openSync(mode: FileMode.write);
       try {
-        sf1.saveMax(wf);
+        sf1.saveMax(FileSaveIo(wraf));
       } finally {
-        wf.closeSync();
+        wraf.closeSync();
       }
 
       // Reload as MAX.
       final sf2 = Ps2SaveFile();
-      final f2 = File(maxPath).openSync();
+      final raf2 = File(maxPath).openSync();
       try {
-        sf2.loadMax(f2);
+        sf2.loadMax(FileSaveIo(raf2));
       } finally {
-        f2.closeSync();
+        raf2.closeSync();
       }
 
       expect(sf2.getDirectory().name, equals(sf1.getDirectory().name));
@@ -758,27 +758,27 @@ void main() {
     test('MAX → PSU file data matches Python-generated PSU (oracle check)', () {
       // Load Python-generated MAX.
       final sfMax = Ps2SaveFile();
-      final f1 = File('test/test_files/NFL2K16.max').openSync();
+      final raf1 = File('test/test_files/NFL2K16.max').openSync();
       try {
-        sfMax.loadMax(f1);
+        sfMax.loadMax(FileSaveIo(raf1));
       } finally {
-        f1.closeSync();
+        raf1.closeSync();
       }
 
       // Convert to PSU via Dart.
       final psuPath = p.join(tmpDir.path, 'dart.psu');
-      final wf = File(psuPath).openSync(mode: FileMode.write);
+      final wraf = File(psuPath).openSync(mode: FileMode.write);
       try {
-        sfMax.saveEms(wf);
+        sfMax.saveEms(FileSaveIo(wraf));
       } finally {
-        wf.closeSync();
+        wraf.closeSync();
       }
 
       // Load both the Dart-produced PSU and the Python-produced PSU.
       final sfDart = Ps2SaveFile();
       final fd = File(psuPath).openSync();
       try {
-        sfDart.loadEms(fd);
+        sfDart.loadEms(FileSaveIo(fd));
       } finally {
         fd.closeSync();
       }
@@ -786,7 +786,7 @@ void main() {
       final sfPy = Ps2SaveFile();
       final fp = File('test/test_files/NFL2K16.psu').openSync();
       try {
-        sfPy.loadEms(fp);
+        sfPy.loadEms(FileSaveIo(fp));
       } finally {
         fp.closeSync();
       }
@@ -919,11 +919,11 @@ void main() {
 
       // Verify the output is loadable and has the right title.
       final sf = Ps2SaveFile();
-      final f = File(outMax).openSync();
+      final raf = File(outMax).openSync();
       try {
-        sf.loadMax(f);
+        sf.loadMax(FileSaveIo(raf));
       } finally {
-        f.closeSync();
+        raf.closeSync();
       }
       expect(sf.getDirectory().name, equals('BASLUS-20919NFL2K16'));
       expect(sf.getIconSys()?.title().$1, equals('ESPN NFL 2K5'));
@@ -945,7 +945,7 @@ void main() {
       final sfDart = Ps2SaveFile();
       final fd = File(outPsu).openSync();
       try {
-        sfDart.loadEms(fd);
+        sfDart.loadEms(FileSaveIo(fd));
       } finally {
         fd.closeSync();
       }
@@ -954,7 +954,7 @@ void main() {
       final sfPy = Ps2SaveFile();
       final fp = File('test/test_files/NFL2K16.psu').openSync();
       try {
-        sfPy.loadEms(fp);
+        sfPy.loadEms(FileSaveIo(fp));
       } finally {
         fp.closeSync();
       }

@@ -22,7 +22,7 @@ export 'src/ps2mc.dart'
 
 import 'dart:io';
 
-
+import 'src/ps2card_io.dart';
 import 'src/ps2mc.dart';
 import 'src/ps2mc_dir.dart';
 import 'src/ps2save.dart';
@@ -192,7 +192,7 @@ int doCheck(String cmd, Ps2MemoryCard mc, List<String> args) {
     return 1;
   }
   try {
-    final ok = mc.check();
+    final ok = mc.check(onMessage: stdout.writeln);
     if (ok) {
       stdout.writeln('No errors found.');
       return 0;
@@ -373,10 +373,11 @@ int doRename(String cmd, Ps2MemoryCard mc, List<String> args) {
 }
 
 Ps2SaveFile _loadSaveFile(String filename) {
-  final f = File(filename).openSync();
+  final raf = File(filename).openSync();
+  final f = FileSaveIo(raf);
   try {
-    final header = f.readSync(16);
-    f.setPositionSync(0);
+    final header = f.read(16);
+    f.setPosition(0);
     final ftype = detectFileType(header);
     final sf = Ps2SaveFile();
     if (ftype == 'psu') {
@@ -394,7 +395,7 @@ Ps2SaveFile _loadSaveFile(String filename) {
     }
     return sf;
   } finally {
-    f.closeSync();
+    raf.closeSync();
   }
 }
 
@@ -507,7 +508,7 @@ int doExport(String cmd, Ps2MemoryCard mc, List<String> args) {
   for (final dirname in dirs) {
     for (final d in mc.glob(dirname)) {
       try {
-        final sf = mc.exportSaveFile(d);
+        final sf = mc.exportSaveFile(d, onWarning: stderr.writeln);
         String filename;
         if (useLongnames) {
           final longname = sf.makeLongname(d.split('/').last);
@@ -527,7 +528,8 @@ int doExport(String cmd, Ps2MemoryCard mc, List<String> args) {
         }
 
         stdout.writeln('Exporting $d to $filename');
-        final f = File(filename).openSync(mode: FileMode.write);
+        final raf = File(filename).openSync(mode: FileMode.write);
+        final f = FileSaveIo(raf);
         try {
           if (type == 'psu') {
             sf.saveEms(f);
@@ -538,7 +540,7 @@ int doExport(String cmd, Ps2MemoryCard mc, List<String> args) {
             rc = 1;
           }
         } finally {
-          f.closeSync();
+          raf.closeSync();
         }
       } on Ps2McError catch (e) {
         stderr.writeln(e.toString());
@@ -790,7 +792,8 @@ int doConvert(List<String> args) {
     return 1;
   }
 
-  final f = File(outputPath).openSync(mode: FileMode.write);
+  final raf = File(outputPath).openSync(mode: FileMode.write);
+  final f = FileSaveIo(raf);
   try {
     stdout.writeln('Converting $inputPath to $outputPath');
     if (outType == 'psu') {
@@ -803,12 +806,12 @@ int doConvert(List<String> args) {
       sf.saveCbs(f);
     }
   } on UnimplementedError catch (e) {
-    f.closeSync();
+    raf.closeSync();
     File(outputPath).deleteSync();
     stderr.writeln('convert: $e');
     return 1;
   } finally {
-    f.closeSync();
+    raf.closeSync();
   }
   return 0;
 }

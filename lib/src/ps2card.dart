@@ -4,7 +4,7 @@
 // Hides internal types (Ps2MemoryCard, Ps2SaveFile, PS2DirEntry, etc.)
 // behind simple value types and factory constructors.
 
-import 'dart:io';
+import 'dart:io'; // File — used only in openFile / formatFile factories
 import 'dart:typed_data';
 
 import 'ps2card_io.dart';
@@ -48,65 +48,6 @@ class Ps2CardInfo {
 }
 
 // ---------------------------------------------------------------------------
-// _MemoryFile — RandomAccessFile shim backed by a growable byte buffer.
-// Only the methods used by Ps2SaveFile.save*() are implemented.
-// ---------------------------------------------------------------------------
-
-class _MemoryFile implements RandomAccessFile {
-  final _buf = <int>[];
-  int _pos = 0;
-
-  Uint8List get bytes => Uint8List.fromList(_buf);
-
-  @override
-  Uint8List readSync(int bytes) {
-    final end = (_pos + bytes).clamp(0, _buf.length);
-    final result = Uint8List.fromList(_buf.sublist(_pos, end));
-    _pos = end;
-    return result;
-  }
-
-  @override
-  void writeFromSync(List<int> buffer, [int start = 0, int? end]) {
-    final data = buffer.sublist(start, end ?? buffer.length);
-    final needed = _pos + data.length;
-    if (needed > _buf.length) {
-      _buf.addAll(List.filled(needed - _buf.length, 0));
-    }
-    for (int i = 0; i < data.length; i++) {
-      _buf[_pos + i] = data[i];
-    }
-    _pos += data.length;
-  }
-
-  @override
-  int positionSync() => _pos;
-
-  @override
-  int lengthSync() => _buf.length;
-
-  @override
-  RandomAccessFile setPositionSync(int position) {
-    _pos = position;
-    return this;
-  }
-
-  @override
-  void flushSync() {}
-
-  @override
-  void closeSync() {}
-
-  // All other RandomAccessFile methods are unused by Ps2SaveFile.
-  @override
-  dynamic noSuchMethod(Invocation invocation) =>
-      throw UnsupportedError('_MemoryFile.${invocation.memberName} not implemented');
-
-  @override
-  String get path => '<memory>';
-}
-
-// ---------------------------------------------------------------------------
 // Ps2Save — public wrapper around Ps2SaveFile
 // ---------------------------------------------------------------------------
 
@@ -119,18 +60,16 @@ class Ps2Save {
     final ftype = detectFileType(data);
     if (ftype == null) throw ArgumentError('Unrecognised save file format');
     final sf = Ps2SaveFile();
-    final mf = _MemoryFile();
-    mf.writeFromSync(data);
-    mf.setPositionSync(0);
+    final mio = MemorySaveIo(data);
     switch (ftype) {
       case 'psu':
-        sf.loadEms(mf);
+        sf.loadEms(mio);
       case 'max':
-        sf.loadMax(mf);
+        sf.loadMax(mio);
       case 'sps':
-        sf.loadSps(mf);
+        sf.loadSps(mio);
       case 'cbs':
-        sf.loadCbs(mf);
+        sf.loadCbs(mio);
       default:
         throw ArgumentError('Unsupported format: $ftype');
     }
@@ -148,18 +87,18 @@ class Ps2Save {
   }
 
   Uint8List toBytes({Ps2SaveFormat format = Ps2SaveFormat.psu}) {
-    final mf = _MemoryFile();
+    final mio = MemorySaveIo();
     switch (format) {
       case Ps2SaveFormat.psu:
-        _sf.saveEms(mf);
+        _sf.saveEms(mio);
       case Ps2SaveFormat.max:
-        _sf.saveMax(mf);
+        _sf.saveMax(mio);
       case Ps2SaveFormat.sps:
-        _sf.saveSps(mf);
+        _sf.saveSps(mio);
       case Ps2SaveFormat.cbs:
-        _sf.saveCbs(mf);
+        _sf.saveCbs(mio);
     }
-    return mf.bytes;
+    return mio.bytes;
   }
 }
 
