@@ -2,7 +2,7 @@
 
 > Dart port of `mymc` — PS2 Memory Card manager (Python 2.7 → Dart)
 > Python source: `mymc-pysrc-2.7/` | Dart source: `lib/`
-> Last updated: 2026-03-03
+> Last updated: 2026-03-04
 
 ---
 
@@ -123,50 +123,66 @@ Browser / WASM support is a future concern; desktop OS is the current target.
 
 ---
 
-## Phase 6 — Parity Testing & Polish ☐ TODO
+## Phase 6 — Parity Testing & Polish ✅ COMPLETE
 
 **Goal:** Systematic verification of Dart vs Python output for every command.
 
-- [x] `ls` output — character-for-character identical to Python
-- [x] `df` output — identical to Python
-- [x] `dir` output — identical to Python (fixed Shift-JIS 0x81xx punctuation decode)
+- [x] `ls` output — character-for-character identical to Python (golden file)
+- [x] `df` output — identical to Python (golden file)
+- [x] `dir` output — identical to Python (golden file; fixed Shift-JIS 0x81xx punctuation)
 - [x] Exported `.psu` — byte-for-byte identical to Python
 - [x] Exported `.max` — byte-for-byte identical to Python
-- [x] `--ignore-ecc` / `-i` flag — already wired through to `Ps2MemoryCard`
-- [x] `--version` flag — already works
-- [x] `dart_mymc help <command>` — per-command help text
+- [x] `--ignore-ecc` / `-i` flag — wired through to `Ps2MemoryCard`
+- [x] `--version` flag — works
+- [x] `dart_mymc help <command>` — per-command help text (all 17 commands)
+- [x] `test/README.md` — documents all fixture files and regeneration commands
 - [ ] `.cbs` and `.sps` import test against real save files (blocked: no test data)
 - [ ] `saveSps` / `saveCbs` writers (blocked: no test data / Python reference)
 
 ---
 
-## Phase 7 — Clean Library API ☐ TODO
+## Phase 7 — Clean Library API ✅ COMPLETE
 
 **Goal:** Make `dart_mymc` usable as a library with a stable, clean public surface.
-Three key concerns drive this phase:
 
-1. **I/O abstraction** — Replace hard `RandomAccessFile` coupling with a thin
-   `Ps2CardIo` interface so callers can pass in-memory `Uint8List` buffers,
-   file handles, or future WASM byte arrays without touching the core logic.
+- [x] `lib/src/ps2card_io.dart` — `Ps2CardIo` abstract interface + `FileCardIo` + `MemoryCardIo`
+- [x] `lib/src/ps2mc.dart` — `Ps2CardIo` threaded through; `Ps2MemoryCard.fromIo()` constructor
+- [x] `lib/src/ps2card.dart` — `Ps2Card` facade, `Ps2Save`, `Ps2SaveInfo`, `Ps2CardInfo`, `Ps2SaveFormat`, `_MemoryFile` shim
+- [x] `lib/dart_mymc.dart` — barrel exports only the public facade + exception types
+- [x] Tests use direct `src/` imports for internals; 4 new `Ps2Card` API tests
+- [x] `README.md` — full library API documentation with examples
+- [x] 52 tests total, all pass
 
-2. **Public API surface** — Hide internal types (`PS2DirEntry`, FAT details,
-   `_DirLoc`) behind higher-level value objects (`Ps2SaveInfo`, `Ps2CardInfo`).
-   Expose a clean `Ps2Card` facade with `open/format/listSaves/importSave/exportSave`.
+---
 
-3. **Error handling** — Rationalise the exception hierarchy; consider typed
-   `Result<T, Ps2Error>` returns for operations where partial-success matters,
-   so library consumers don't need to catch internal exception types.
+## Phase 8 — Browser / WASM Readiness ☐ TODO
 
-- [ ] Define `Ps2CardIo` abstract interface (`readPage`, `writePage`, `pageCount`)
-- [ ] Implement `FileCardIo` (`dart:io` backed) and `MemoryCardIo` (`Uint8List` backed)
-- [ ] Introduce `Ps2Card` facade (open, format, listSaves, importSave, exportSave, close)
-- [ ] Define `Ps2SaveInfo` and `Ps2CardInfo` value types (no internal fields exposed)
-- [ ] Rationalise exception hierarchy (`Ps2Error` base, typed subclasses)
-- [ ] Update `lib/dart_mymc.dart` exports — expose only the public facade
-- [ ] Update tests to use the new API surface
-- [ ] Browser / WASM ☐ FUTURE
-  - [ ] Audit remaining `dart:io` usage after I/O abstraction
-  - [ ] Compile to WASM / JS and smoke-test in Chrome
+**Goal:** Remove `dart:io` from the core logic so the library compiles for browser/WASM.
+The CLI (`bin/`, `lib/dart_mymc.dart`) and file-path adapters (`FileCardIo`, `Ps2Card.openFile`)
+may keep `dart:io`. The core codec and filesystem logic must not.
+
+### dart:io audit (current state)
+
+| File | dart:io usage | Action |
+|---|---|---|
+| `lib/src/ps2card_io.dart` | `FileCardIo` wraps `RandomAccessFile` | ✅ Intentional — file adapter |
+| `lib/src/ps2card.dart` | `_MemoryFile` implements `RandomAccessFile`; `File` in `openFile`/`formatFile` | Decouple `_MemoryFile` from RAF; file factories stay |
+| `lib/src/ps2mc.dart` | `File(path)` in factory; `stdout`/`stderr` in `check()` + `exportSaveFile()` | Move `File` to `FileCardIo`; remove stdout/stderr from core |
+| `lib/src/ps2save.dart` | `RandomAccessFile` in all load/save methods | Replace with a `SaveIo` interface (mirrors `Ps2CardIo`) |
+| `lib/dart_mymc.dart` | stdout, stderr, File, Platform, exit — intentional CLI I/O | ✅ Keep as-is |
+
+### Tasks
+
+- [ ] Define `SaveIo` abstract interface in `lib/src/ps2save.dart` (or shared file)
+  - Methods: `read(n)`, `write(buf)`, `setPosition(n)`, `position()`, `length()`, `flush()`
+  - Implement `FileSaveIo` (wraps `RandomAccessFile`) in `lib/src/ps2card_io.dart`
+  - `_MemoryFile` in `ps2card.dart` becomes `MemorySaveIo` implementing `SaveIo`
+- [ ] Update all `Ps2SaveFile` load/save methods to use `SaveIo` instead of `RandomAccessFile`
+- [ ] Remove `stdout`/`stderr` from `Ps2MemoryCard.check()` and `exportSaveFile()` — return/throw instead
+- [ ] Move `File(path).openSync()` out of `Ps2MemoryCard(String path)` factory into `FileCardIo`
+- [ ] Remove `import 'dart:io'` from `ps2mc.dart` and `ps2save.dart`
+- [ ] Compile to WASM / JS and smoke-test in a browser
+- [ ] Add a `dart2wasm` or `dart compile js` build step to CI
 
 ---
 
@@ -178,8 +194,10 @@ Three key concerns drive this phase:
 | Phase 3 (write ops) | 11 unit + 2 CLI = 13 | ✅ All pass (31 cumulative) |
 | Phase 4 (save formats) | 9 unit/CLI | ✅ All pass (40 cumulative) |
 | Phase 5 (conversion/create) | 2 unit + 4 CLI = 6 | ✅ All pass (48 cumulative) |
-| Phase 6 (parity/polish) | 0 | ☐ Not started |
-| **Total** | **48** | **All pass** |
+| Phase 6 (parity/polish) | 3 golden-file CLI | ✅ All pass (48 cumulative, tests added to existing groups) |
+| Phase 7 (library API) | 4 Ps2Card facade | ✅ All pass (52 cumulative) |
+| Phase 8 (WASM readiness) | TBD | ☐ Not started |
+| **Total** | **52** | **All pass** |
 
 ---
 
@@ -194,7 +212,9 @@ Three key concerns drive this phase:
 | `lib/src/lzari.dart` | `lzari.py` | ✅ Complete |
 | `lib/src/ps2save.dart` | `ps2save.py` | ✅ Complete (load all 4; save psu+max; save sps/cbs pending) |
 | `lib/src/ps2mc.dart` | `ps2mc.py` | ✅ Complete |
-| `lib/dart_mymc.dart` | `mymc.py` | ✅ Complete (convert/create pending) |
+| `lib/src/ps2card_io.dart` | *(new)* | ✅ Complete — `Ps2CardIo`, `FileCardIo`, `MemoryCardIo` |
+| `lib/src/ps2card.dart` | *(new)* | ✅ Complete — `Ps2Card`, `Ps2Save`, `Ps2SaveInfo`, `Ps2CardInfo` |
+| `lib/dart_mymc.dart` | `mymc.py` | ✅ Complete |
 | `bin/dart_mymc.dart` | *(entry point)* | ✅ Complete |
 | `gui.py` | — | ⛔ Out of scope (GUI excluded) |
 

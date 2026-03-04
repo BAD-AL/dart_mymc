@@ -7,6 +7,7 @@ import 'dart:collection';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'ps2card_io.dart';
 import 'ps2mc_dir.dart';
 import 'ps2mc_ecc.dart';
 import 'ps2save.dart';
@@ -614,7 +615,7 @@ class Ps2MemoryCard {
   late int allocatableClusterLimit;
 
   // ---- runtime state ----
-  late RandomAccessFile _f;
+  late Ps2CardIo _io;
   late String _filePath;
   bool ignoreEcc = false;
   bool modified = false;
@@ -629,21 +630,33 @@ class Ps2MemoryCard {
   // Constructor / open
   // ---------------------------------------------------------------------------
 
-  Ps2MemoryCard(String path, {bool ignoreEcc = false, List<int>? formatParams}) {
-    _filePath = path;
+  /// Open or create a card from a file path.
+  factory Ps2MemoryCard(String path,
+      {bool ignoreEcc = false, List<int>? formatParams}) {
     // FileMode.write  → O_RDWR | O_CREAT | O_TRUNC  (new card)
     // FileMode.append → O_RDWR | O_CREAT (no truncate) (existing card, read-write)
     final mode = formatParams != null ? FileMode.write : FileMode.append;
-    _f = File(path).openSync(mode: mode);
+    final io = FileCardIo(File(path).openSync(mode: mode));
+    return Ps2MemoryCard.fromIo(io,
+        filePath: path, ignoreEcc: ignoreEcc, formatParams: formatParams);
+  }
+
+  /// Open or create a card from any [Ps2CardIo] backend.
+  Ps2MemoryCard.fromIo(Ps2CardIo io,
+      {String? filePath,
+      bool ignoreEcc = false,
+      List<int>? formatParams}) {
+    _io = io;
+    _filePath = filePath ?? '<memory>';
     _openFiles = {};
 
-    _f.setPositionSync(0);
-    final headerBytes = _f.readSync(_Superblock.rawSize);
+    _io.setPosition(0);
+    final headerBytes = _io.read(_Superblock.rawSize);
 
     if (headerBytes.length != _Superblock.rawSize ||
         !_startsWithMagic(headerBytes)) {
       if (formatParams == null) {
-        throw Ps2McCorrupt('Not a PS2 memory card image', path);
+        throw Ps2McCorrupt('Not a PS2 memory card image', _filePath);
       }
       _format(formatParams);
     } else {
@@ -672,7 +685,7 @@ class Ps2MemoryCard {
         dotdot.name != '..' ||
         !modeIsDir(dot.mode) ||
         !modeIsDir(dotdot.mode)) {
-      throw Ps2McCorrupt('Root directory damaged.', path);
+      throw Ps2McCorrupt('Root directory damaged.', _filePath);
     }
 
     curdir = (0, 0);
@@ -720,15 +733,15 @@ class Ps2MemoryCard {
   // ---------------------------------------------------------------------------
 
   Uint8List _readPage(int n) {
-    _f.setPositionSync(rawPageSize * n);
-    final page = _f.readSync(pageSize);
+    _io.setPosition(rawPageSize * n);
+    final page = _io.read(pageSize);
     if (page.length != pageSize) {
       throw Ps2McCorrupt(
           'Attempted to read past EOF (page 0x${n.toRadixString(16)})',
           _filePath);
     }
     if (ignoreEcc) return page;
-    final spare = _f.readSync(spareSize);
+    final spare = _io.read(spareSize);
     if (spare.length != spareSize) {
       throw Ps2McCorrupt(
           'Attempted to read past EOF (spare of page 0x${n.toRadixString(16)})',
@@ -746,8 +759,8 @@ class Ps2MemoryCard {
     if (buf.length != pageSize) {
       throw Ps2McError('internal error: write_page size mismatch');
     }
-    _f.setPositionSync(rawPageSize * n);
-    _f.writeFromSync(buf);
+    _io.setPosition(rawPageSize * n);
+    _io.write(buf);
     modified = true;
     if (spareSize != 0) {
       final eccs = eccCalculatePage(buf);
@@ -757,15 +770,15 @@ class Ps2MemoryCard {
         spareData[i * 3 + 1] = eccs[i][1];
         spareData[i * 3 + 2] = eccs[i][2];
       }
-      _f.writeFromSync(spareData);
+      _io.write(spareData);
     }
   }
 
   Uint8List _readCluster(int n) {
     if (spareSize == 0) {
       // No ECC: clusters are packed tightly.
-      _f.setPositionSync(clusterSize * n);
-      return _f.readSync(clusterSize);
+      _io.setPosition(clusterSize * n);
+      return _io.read(clusterSize);
     }
     // With ECC: read page-by-page.
     final base = n * pagesPerCluster;
@@ -779,8 +792,8 @@ class Ps2MemoryCard {
 
   void _writeCluster(int n, Uint8List buf) {
     if (spareSize == 0) {
-      _f.setPositionSync(clusterSize * n);
-      _f.writeFromSync(buf);
+      _io.setPosition(clusterSize * n);
+      _io.write(buf);
       return;
     }
     final base = n * pagesPerCluster;
@@ -1932,9 +1945,9 @@ class Ps2MemoryCard {
     // Erase good_block2 (write 0xFF pages).
     final ffPage = Uint8List.fromList(List.filled(rawPageSize, 0xFF));
     final base = goodBlock2 * pagesPerEraseBlock;
-    _f.setPositionSync(base * rawPageSize);
+    _io.setPosition(base * rawPageSize);
     for (int i = 0; i < pagesPerEraseBlock; i++) {
-      _f.writeFromSync(ffPage);
+      _io.write(ffPage);
     }
     modified = false;
   }
@@ -2021,9 +2034,9 @@ class Ps2MemoryCard {
       erasedRaw.setRange(0, pgSize, erasedPage);
       erasedRaw.setRange(pgSize, pgSize + spare.length, spare);
     }
-    _f.setPositionSync(0);
+    _io.setPosition(0);
     for (int p = 0; p < pagesPerCard; p++) {
-      _f.writeFromSync(erasedRaw);
+      _io.write(erasedRaw);
     }
     modified = true;
 
@@ -2091,6 +2104,6 @@ class Ps2MemoryCard {
     _rootdir?.realClose();
     _rootdir = null;
     _openFiles = null;
-    _f.closeSync();
+    _io.close();
   }
 }

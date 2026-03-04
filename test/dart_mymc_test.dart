@@ -2,6 +2,9 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:dart_mymc/dart_mymc.dart';
 import 'package:dart_mymc/src/lzari.dart';
+import 'package:dart_mymc/src/ps2mc.dart';
+import 'package:dart_mymc/src/ps2mc_ecc.dart';
+import 'package:dart_mymc/src/ps2save.dart';
 import 'package:test/test.dart';
 import 'package:path/path.dart' as p;
 
@@ -965,5 +968,68 @@ void main() {
         expect(dd, equals(dp), reason: 'file $i data');
       }
     }, timeout: const Timeout(Duration(seconds: 60)));
+  });
+
+  // -------------------------------------------------------------------------
+  // Phase 7 — Ps2Card public API (no dart:io in test code, no internal types)
+  // -------------------------------------------------------------------------
+
+  group('Phase 7 — Ps2Card public API', () {
+    test('formatMemory: card has free space and no saves', () {
+      final card = Ps2Card.formatMemory();
+      try {
+        final info = card.info;
+        expect(info.freeBytes, greaterThan(0));
+        expect(info.saves, isEmpty);
+      } finally {
+        card.close();
+      }
+    });
+
+    test('openFile: listSaves returns correct count and titles', () {
+      final card = Ps2Card.openFile(testCard);
+      try {
+        final saves = card.listSaves();
+        expect(saves.length, equals(5)); // excludes . and ..
+        final nfl = saves.firstWhere((s) => s.dirName == 'BASLUS-20919NFL2K16');
+        expect(nfl.title, contains('ESPN NFL 2K5'));
+      } finally {
+        card.close();
+      }
+    });
+
+    test('importSave + exportSave round-trip preserves content', () {
+      // Load a reference PSU as raw bytes, import into a fresh card, re-export.
+      final psuBytes = File('test/test_files/NFL2K16.psu').readAsBytesSync();
+      final original = Ps2Save.fromBytes(psuBytes);
+
+      final card = Ps2Card.formatMemory();
+      try {
+        card.importSave(psuBytes);
+        final exportedBytes = card.exportSave('BASLUS-20919NFL2K16');
+        final roundTripped = Ps2Save.fromBytes(exportedBytes);
+
+        // Directory name and title must be preserved.
+        expect(roundTripped.dirName, equals(original.dirName));
+        expect(roundTripped.title, equals(original.title));
+      } finally {
+        card.close();
+      }
+    });
+
+    test('deleteSave: save no longer appears in listSaves', () {
+      final psuBytes = File('test/test_files/NFL2K16.psu').readAsBytesSync();
+      final card = Ps2Card.formatMemory();
+      try {
+        card.importSave(psuBytes);
+        expect(card.listSaves().map((s) => s.dirName),
+            contains('BASLUS-20919NFL2K16'));
+        card.deleteSave('BASLUS-20919NFL2K16');
+        expect(card.listSaves().map((s) => s.dirName),
+            isNot(contains('BASLUS-20919NFL2K16')));
+      } finally {
+        card.close();
+      }
+    });
   });
 }
