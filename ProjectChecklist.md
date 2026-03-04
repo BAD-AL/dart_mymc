@@ -140,14 +140,33 @@ Browser / WASM support is a future concern; desktop OS is the current target.
 
 ---
 
-## Phase 7 — Browser / WASM ☐ FUTURE
+## Phase 7 — Clean Library API ☐ TODO
 
-**Goal:** Run dart_mymc in a browser context (no `dart:io`).
+**Goal:** Make `dart_mymc` usable as a library with a stable, clean public surface.
+Three key concerns drive this phase:
 
-- [ ] Audit `dart:io` usage — isolate to thin adapters
-- [ ] Replace `RandomAccessFile` I/O with `Uint8List`-backed virtual file
-- [ ] Replace `Process.run` (test runner) with browser-compatible equivalent
-- [ ] Compile to WASM / JS and smoke-test in Chrome
+1. **I/O abstraction** — Replace hard `RandomAccessFile` coupling with a thin
+   `Ps2CardIo` interface so callers can pass in-memory `Uint8List` buffers,
+   file handles, or future WASM byte arrays without touching the core logic.
+
+2. **Public API surface** — Hide internal types (`PS2DirEntry`, FAT details,
+   `_DirLoc`) behind higher-level value objects (`Ps2SaveInfo`, `Ps2CardInfo`).
+   Expose a clean `Ps2Card` facade with `open/format/listSaves/importSave/exportSave`.
+
+3. **Error handling** — Rationalise the exception hierarchy; consider typed
+   `Result<T, Ps2Error>` returns for operations where partial-success matters,
+   so library consumers don't need to catch internal exception types.
+
+- [ ] Define `Ps2CardIo` abstract interface (`readPage`, `writePage`, `pageCount`)
+- [ ] Implement `FileCardIo` (`dart:io` backed) and `MemoryCardIo` (`Uint8List` backed)
+- [ ] Introduce `Ps2Card` facade (open, format, listSaves, importSave, exportSave, close)
+- [ ] Define `Ps2SaveInfo` and `Ps2CardInfo` value types (no internal fields exposed)
+- [ ] Rationalise exception hierarchy (`Ps2Error` base, typed subclasses)
+- [ ] Update `lib/dart_mymc.dart` exports — expose only the public facade
+- [ ] Update tests to use the new API surface
+- [ ] Browser / WASM ☐ FUTURE
+  - [ ] Audit remaining `dart:io` usage after I/O abstraction
+  - [ ] Compile to WASM / JS and smoke-test in Chrome
 
 ---
 

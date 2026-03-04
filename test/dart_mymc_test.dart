@@ -192,37 +192,34 @@ void main() {
   // -------------------------------------------------------------------------
 
   group('CLI integration', () {
-    test('df command prints correct free space', () async {
+    test('df output matches Python golden file', () async {
       final result = await Process.run(
         'dart',
         ['run', 'bin/dart_mymc.dart', testCard, 'df'],
       );
       expect(result.exitCode, equals(0));
-      expect(result.stdout.toString().trim(),
-          equals('$testCard: 6494208 bytes free.'));
+      final golden = File('test/test_files/golden_df.txt').readAsStringSync();
+      expect(result.stdout.toString(), equals(golden));
     }, timeout: const Timeout(Duration(seconds: 30)));
 
-    test('ls / shows all expected save directory names', () async {
+    test('ls output matches Python golden file', () async {
       final result = await Process.run(
         'dart',
         ['run', 'bin/dart_mymc.dart', testCard, 'ls'],
       );
       expect(result.exitCode, equals(0));
-      final output = result.stdout.toString();
-      for (final name in expectedRootNames) {
-        expect(output, contains(name));
-      }
+      final golden = File('test/test_files/golden_ls.txt').readAsStringSync();
+      expect(result.stdout.toString(), equals(golden));
     }, timeout: const Timeout(Duration(seconds: 30)));
 
-    test('dir shows correct save titles and free space', () async {
+    test('dir output matches Python golden file', () async {
       final result = await Process.run(
         'dart',
         ['run', 'bin/dart_mymc.dart', testCard, 'dir'],
       );
       expect(result.exitCode, equals(0));
-      final output = result.stdout.toString();
-      expect(output, contains('ESPN NFL 2K5'));
-      expect(output, contains('KB Free'));
+      final golden = File('test/test_files/golden_dir.txt').readAsStringSync();
+      expect(result.stdout.toString(), equals(golden));
     }, timeout: const Timeout(Duration(seconds: 30)));
   });
 
