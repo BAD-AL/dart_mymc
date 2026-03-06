@@ -5,14 +5,20 @@ a PS2 Memory Card manager originally written in Python 2.7 by Ross Ridge.
 
 Supports reading and writing standard 8 MB PS2 memory card images (`.ps2`),
 importing and exporting saves in four formats (`.psu`, `.max`, `.sps`, `.cbs`),
-and converting between formats.
+and converting between formats. [Note: formats `.sps`, `.cbs` not tested]
 
 ---
 
 ## CLI usage
 
+```bash
+# Compile
+dart compile exe bin/dart_mymc.dart -o mymc
 ```
-dart run bin/dart_mymc.dart <memcard.ps2> <command> [options] [args]
+
+```bash
+# run 
+mymc <memcard.ps2> <command> [options] [args]
 ```
 
 | Command | Description |
@@ -38,26 +44,26 @@ dart run bin/dart_mymc.dart <memcard.ps2> <command> [options] [args]
 
 ```sh
 # List saves on a card
-dart run bin/dart_mymc.dart Mcd001.ps2 dir
+mymc Mcd001.ps2 dir
 
 # Export a save as PSU
-dart run bin/dart_mymc.dart Mcd001.ps2 export -o NFL2K16.psu /BASLUS-20919NFL2K16
+mymc Mcd001.ps2 export -o NFL2K16.psu /BASLUS-20919NFL2K16
 
 # Export as MAX Drive format
-dart run bin/dart_mymc.dart Mcd001.ps2 export -t max -o NFL2K16.max /BASLUS-20919NFL2K16
+mymc Mcd001.ps2 export -t max -o NFL2K16.max /BASLUS-20919NFL2K16
 
 # Import a save onto a card
-dart run bin/dart_mymc.dart Mcd001.ps2 import NFL2K16.psu
+mymc Mcd001.ps2 import NFL2K16.psu
 
 # Convert PSU → MAX (no card needed)
-dart run bin/dart_mymc.dart convert NFL2K16.psu NFL2K16.max
+mymc convert NFL2K16.psu NFL2K16.max
 
 # Create a fresh card from a save file
-dart run bin/dart_mymc.dart new.ps2 create NFL2K16.psu
+mymc new.ps2 create NFL2K16.psu
 
 # Per-command help
-dart run bin/dart_mymc.dart help export
-dart run bin/dart_mymc.dart Mcd001.ps2 export --help
+mymc help export
+mymc Mcd001.ps2 export --help
 ```
 
 ---
@@ -95,11 +101,11 @@ import 'package:dart_mymc/dart_mymc.dart';
 
 ```dart
 // Format a new card file on disk
-final card = Ps2Card.formatFile('new.ps2');
+Ps2Card card = Ps2Card.formatFile('new.ps2');
 card.close();
 
 // Format a card entirely in memory (no disk I/O)
-final card = Ps2Card.formatMemory();
+Ps2Card card = Ps2Card.formatMemory();
 // ... use card ...
 card.close();
 ```
@@ -108,25 +114,25 @@ card.close();
 
 ```dart
 // From a file path
-final card = Ps2Card.openFile('Mcd001.ps2');
+Ps2Card card = Ps2Card.openFile('Mcd001.ps2');
 
 // From raw bytes (e.g. loaded from a database or network)
-final bytes = File('Mcd001.ps2').readAsBytesSync();
-final card = Ps2Card.openMemory(bytes);
+Uint8List bytes = File('Mcd001.ps2').readAsBytesSync();
+Ps2Card card = Ps2Card.openMemory(bytes);
 ```
 
 ### List saves
 
 ```dart
-final card = Ps2Card.openFile('Mcd001.ps2');
+Ps2Card card = Ps2Card.openFile('Mcd001.ps2');
 try {
-  final saves = card.listSaves();
+  List<Ps2SaveInfo> saves = card.listSaves();
   for (final save in saves) {
     print('${save.dirName}  "${save.title}"  ${save.sizeBytes ~/ 1024} KB');
   }
 
   // Or get everything at once
-  final info = card.info;
+  Ps2CardInfo info = card.info;
   print('Free: ${info.freeBytes ~/ 1024} KB of ${info.totalBytes ~/ 1024} KB');
 } finally {
   card.close();
@@ -136,10 +142,10 @@ try {
 ### Import a save
 
 ```dart
-final card = Ps2Card.openFile('Mcd001.ps2');
+Ps2Card card = Ps2Card.openFile('Mcd001.ps2');
 try {
   // Format is auto-detected from the magic bytes (.psu, .max, .sps, .cbs)
-  final saveBytes = File('NFL2K16.psu').readAsBytesSync();
+  Uint8List saveBytes = File('NFL2K16.psu').readAsBytesSync();
   card.importSave(saveBytes);
 
   // Allow overwriting an existing save with the same directory name
@@ -152,14 +158,14 @@ try {
 ### Export a save
 
 ```dart
-final card = Ps2Card.openFile('Mcd001.ps2');
+Ps2Card card = Ps2Card.openFile('Mcd001.ps2');
 try {
   // Export as PSU (default)
-  final psuBytes = card.exportSave('BASLUS-20919NFL2K16');
+  Uint8List psuBytes = card.exportSave('BASLUS-20919NFL2K16');
   File('NFL2K16.psu').writeAsBytesSync(psuBytes);
 
   // Export as MAX Drive
-  final maxBytes = card.exportSave('BASLUS-20919NFL2K16',
+  Uint8List maxBytes = card.exportSave('BASLUS-20919NFL2K16',
       format: Ps2SaveFormat.max);
   File('NFL2K16.max').writeAsBytesSync(maxBytes);
 } finally {
@@ -170,7 +176,7 @@ try {
 ### Delete a save
 
 ```dart
-final card = Ps2Card.openFile('Mcd001.ps2');
+Ps2Card card = Ps2Card.openFile('Mcd001.ps2');
 try {
   card.deleteSave('BASLUS-20919NFL2K16');
 } finally {
@@ -184,21 +190,21 @@ try {
 
 ```dart
 // Load from any supported format (auto-detected)
-final psuBytes = File('NFL2K16.psu').readAsBytesSync();
-final save = Ps2Save.fromBytes(psuBytes);
+Uint8List psuBytes = File('NFL2K16.psu').readAsBytesSync();
+Ps2Save save = Ps2Save.fromBytes(psuBytes);
 
 print(save.dirName);  // BASLUS-20919NFL2K16
 print(save.title);    // ESPN NFL 2K5 NFL21Ros
 
 // Convert to MAX Drive
-final maxBytes = save.toBytes(format: Ps2SaveFormat.max);
+Ps2Save maxBytes = save.toBytes(format: Ps2SaveFormat.max);
 File('NFL2K16.max').writeAsBytesSync(maxBytes);
 ```
 
 ### Create a new card from saves (fully in-memory)
 
 ```dart
-final card = Ps2Card.formatMemory();
+Ps2Card card = Ps2Card.formatMemory();
 try {
   for (final path in ['save1.psu', 'save2.max']) {
     card.importSave(File(path).readAsBytesSync());
