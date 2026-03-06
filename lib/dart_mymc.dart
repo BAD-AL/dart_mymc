@@ -26,6 +26,7 @@ import 'src/ps2card_io.dart';
 import 'src/ps2mc.dart';
 import 'src/ps2mc_dir.dart';
 import 'src/ps2save.dart';
+import 'src/usage.dart';
 
 // ---------------------------------------------------------------------------
 // Subcommand helpers
@@ -1178,6 +1179,15 @@ Options:
                         Overwrite the card image if it already exists.
   -h, --help            show this help message and exit''',
 
+  'usage': '''Usage: dart_mymc usage [command]
+           dart_mymc u [command]
+
+Show detailed usage examples. If [command] is given, show only examples
+for that command (e.g. "import", "export-files").
+
+Options:
+  -h, --help  show this help message and exit''',
+
   'delete': '''Usage: dart_mymc memcard.ps2 delete dirname ...
 
 Recursively delete a directory (save file).
@@ -1355,6 +1365,8 @@ const _commandDescriptions = {
   'remove': 'Remove files and directories.',
   'rename': 'Rename a file or directory',
   'set': 'Set mode flags on files and directories',
+  'usage': 'Show detailed usage examples (optionally filtered by command name).',
+  'u': 'Alias for usage.',
 };
 
 // ---------------------------------------------------------------------------
@@ -1363,6 +1375,12 @@ const _commandDescriptions = {
 
 int runMain(List<String> arguments) {
   final parsed = _parseArgs(arguments);
+
+  // 'mymc usage [command]' / 'mymc u [command]' — no card needed, cmd is optional.
+  if (parsed.mcPath == 'usage' || parsed.mcPath == 'u') {
+    printUsage(parsed.command ?? '');
+    return 0;
+  }
 
   if (parsed.mcPath == null || parsed.command == null) {
     _printHelp();

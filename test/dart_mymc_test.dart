@@ -1379,6 +1379,35 @@ void main() {
       }
     });
 
+    test('Ps2Save.fromFolder: round-trips a save via export-files', () {
+      // Export a save to a host folder.
+      final tmpDir =
+          Directory.systemTemp.createTempSync('dart_mymc_fromfolder_');
+      try {
+        final srcMc = Ps2MemoryCard(testCard);
+        doExportFiles('export-files', srcMc,
+            ['-d', tmpDir.path, '/BASLUS-20919NFL2K16']);
+        srcMc.close();
+
+        final save =
+            Ps2Save.fromFolder(p.join(tmpDir.path, 'BASLUS-20919NFL2K16'));
+        expect(save.dirName, equals('BASLUS-20919NFL2K16'));
+        expect(save.title, contains('ESPN NFL 2K5'));
+
+        // Round-trip: import into a fresh card and verify.
+        final card = Ps2Card.formatMemory();
+        try {
+          card.importSave(save.toBytes());
+          expect(card.listSaves().map((s) => s.dirName),
+              contains('BASLUS-20919NFL2K16'));
+        } finally {
+          card.close();
+        }
+      } finally {
+        tmpDir.deleteSync(recursive: true);
+      }
+    });
+
     test('deleteSave: save no longer appears in listSaves', () {
       final psuBytes = File('test/test_files/NFL2K16.psu').readAsBytesSync();
       final card = Ps2Card.formatMemory();

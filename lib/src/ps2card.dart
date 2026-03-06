@@ -55,6 +55,51 @@ class Ps2Save {
   final Ps2SaveFile _sf;
   Ps2Save._(this._sf);
 
+  /// Load a raw save from a host filesystem folder.
+  /// Every file in [path] is included (subdirectories are ignored).
+  /// The save directory name is taken from the last path component.
+  factory Ps2Save.fromFolder(String path) {
+    final dir = Directory(path);
+    if (!dir.existsSync()) {
+      throw ArgumentError('Folder not found: $path');
+    }
+    final dirName = path.split(Platform.pathSeparator).last;
+    final entries = dir
+        .listSync()
+        .whereType<File>()
+        .toList()
+      ..sort((a, b) => a.path.compareTo(b.path));
+    final ts = todNow();
+    final sf = Ps2SaveFile();
+    sf.setDirectory(PS2DirEntry(
+      mode: dfRwx | dfDir | df0400 | dfExists,
+      length: entries.length,
+      created: ts,
+      fatCluster: 0,
+      parentEntry: 0,
+      modified: ts,
+      name: dirName,
+    ));
+    for (int i = 0; i < entries.length; i++) {
+      final data = entries[i].readAsBytesSync();
+      final filename = entries[i].path.split(Platform.pathSeparator).last;
+      sf.setFile(
+        i,
+        PS2DirEntry(
+          mode: dfRwx | dfFile | df0400 | dfExists,
+          length: data.length,
+          created: ts,
+          fatCluster: 0,
+          parentEntry: 0,
+          modified: ts,
+          name: filename,
+        ),
+        data,
+      );
+    }
+    return Ps2Save._(sf);
+  }
+
   /// Auto-detect format from magic bytes and load.
   factory Ps2Save.fromBytes(Uint8List data) {
     final ftype = detectFileType(data);
@@ -113,6 +158,10 @@ class Ps2Card {
   /// Open an existing card image from a file path.
   factory Ps2Card.openFile(String path, {bool ignoreEcc = false}) =>
       Ps2Card._(Ps2MemoryCard(path, ignoreEcc: ignoreEcc));
+
+  /// Open a card from a custom [Ps2CardIo] backend (e.g. a network or WASM buffer).
+  factory Ps2Card.fromIo(Ps2CardIo io, {bool ignoreEcc = false}) =>
+      Ps2Card._(Ps2MemoryCard.fromIo(io, ignoreEcc: ignoreEcc));
 
   /// Open a card image from raw bytes (in-memory).
   factory Ps2Card.openMemory(Uint8List bytes, {bool ignoreEcc = false}) =>
