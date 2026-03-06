@@ -399,6 +399,44 @@ Ps2SaveFile _loadSaveFile(String filename) {
   }
 }
 
+/// Shared logic: import a flat host folder as a save directory on the card.
+/// The card destination name is always the last component of [hostPath].
+/// Returns 0 on success, 1 on error.
+int _importFolderToCard(
+  String cmd,
+  Ps2MemoryCard mc,
+  String hostPath, {
+  bool ignoreExisting = false,
+}) {
+  final savename = hostPath.split(Platform.pathSeparator).last;
+  try {
+    mc.mkdir(savename);
+  } on Ps2McIoError catch (e) {
+    if (ignoreExisting) {
+      stdout.writeln('Skipping $savename (already exists)');
+      return 0;
+    }
+    stderr.writeln(e.toString());
+    return 1;
+  }
+
+  stdout.writeln('Importing $hostPath -> /$savename/');
+  int rc = 0;
+  for (final entry in Directory(hostPath).listSync()) {
+    if (entry is! File) continue; // PS2 saves are flat; skip nested dirs
+    final filename = entry.path.split(Platform.pathSeparator).last;
+    try {
+      final f = mc.open('$savename/$filename', mode: 'wb');
+      f.write(entry.readAsBytesSync());
+      f.close();
+    } on Ps2McError catch (e) {
+      stderr.writeln(e.toString());
+      rc = 1;
+    }
+  }
+  return rc;
+}
+
 /// `import` — import save files into the memory card.
 int doImport(String cmd, Ps2MemoryCard mc, List<String> args) {
   bool ignoreExisting = false;
@@ -428,10 +466,14 @@ int doImport(String cmd, Ps2MemoryCard mc, List<String> args) {
   }
   int rc = 0;
   for (final filename in files) {
+    if (FileSystemEntity.isDirectorySync(filename)) {
+      rc |= _importFolderToCard(cmd, mc, filename,
+          ignoreExisting: ignoreExisting);
+      continue;
+    }
     try {
       final sf = _loadSaveFile(filename);
-      final dirName =
-          destDir ?? sf.getDirectory().name;
+      final dirName = destDir ?? sf.getDirectory().name;
       stdout.writeln('Importing $filename to $dirName');
       if (!mc.importSaveFile(sf, ignoreExisting, dirname: destDir)) {
         stdout.writeln('$filename: already in memory card image, ignored.');
@@ -446,6 +488,43 @@ int doImport(String cmd, Ps2MemoryCard mc, List<String> args) {
       stderr.writeln('$filename: ${e.message}');
       rc = 1;
     }
+  }
+  return rc;
+}
+
+/// `import-all` — import every subdirectory in a host folder as a save.
+int doImportAll(String cmd, Ps2MemoryCard mc, List<String> args) {
+  bool ignoreExisting = false;
+  String? srcFolder;
+  int i = 0;
+  while (i < args.length) {
+    if (args[i] == '-i' || args[i] == '--ignore-existing') {
+      ignoreExisting = true;
+      i++;
+    } else {
+      srcFolder ??= args[i];
+      i++;
+    }
+  }
+  if (srcFolder == null) {
+    stderr.writeln('$cmd: source folder required.');
+    return 1;
+  }
+  final hostDir = Directory(srcFolder);
+  if (!hostDir.existsSync()) {
+    stderr.writeln('$srcFolder: no such directory.');
+    return 1;
+  }
+  int rc = 0;
+  for (final entry in hostDir.listSync()
+    ..sort((a, b) => a.path.compareTo(b.path))) {
+    if (entry is! Directory) {
+      stderr.writeln(
+          'Skipping ${entry.path.split(Platform.pathSeparator).last} (not a directory)');
+      continue;
+    }
+    rc |= _importFolderToCard(cmd, mc, entry.path,
+        ignoreExisting: ignoreExisting);
   }
   return rc;
 }
@@ -548,6 +627,140 @@ int doExport(String cmd, Ps2MemoryCard mc, List<String> args) {
       }
     }
   }
+  return rc;
+}
+
+/// Shared logic: extract every file inside one save directory to a host folder.
+int _extractSaveToFolder(
+  String cmd,
+  Ps2MemoryCard mc,
+  String savepath, {
+  String? destDir,
+  bool overwriteExisting = false,
+  bool ignoreExisting = false,
+}) {
+  final savename = savepath.split('/').last;
+  final outPath = destDir != null ? '$destDir/$savename' : savename;
+  final outDir = Directory(outPath);
+
+  if (outDir.existsSync()) {
+    if (ignoreExisting) {
+      stdout.writeln('Skipping $savename (already exists)');
+      return 0;
+    }
+    if (!overwriteExisting) {
+      stderr.writeln('$outPath: directory exists.');
+      return 1;
+    }
+  } else {
+    outDir.createSync(recursive: true);
+  }
+
+  stdout.writeln('Extracting $savepath -> $outPath/');
+
+  Ps2McDirectory saveDir;
+  try {
+    saveDir = mc.dirOpen(savepath);
+  } on Ps2McError catch (e) {
+    stderr.writeln(e.toString());
+    return 1;
+  }
+
+  int rc = 0;
+  for (final ent in saveDir) {
+    if (!ent.isFile) continue;
+    try {
+      final f = mc.open('$savepath/${ent.name}');
+      final data = f.read();
+      f.close();
+      File('$outPath/${ent.name}').writeAsBytesSync(data);
+    } on Ps2McError catch (e) {
+      stderr.writeln(e.toString());
+      rc = 1;
+    }
+  }
+  saveDir.close();
+  return rc;
+}
+
+/// `export-files` — extract all files from named save directories to host folders.
+int doExportFiles(String cmd, Ps2MemoryCard mc, List<String> args) {
+  bool overwriteExisting = false;
+  bool ignoreExisting = false;
+  String? destDir;
+  final dirs = <String>[];
+  int i = 0;
+  while (i < args.length) {
+    if (args[i] == '-f' || args[i] == '--overwrite-existing') {
+      overwriteExisting = true;
+      i++;
+    } else if (args[i] == '-i' || args[i] == '--ignore-existing') {
+      ignoreExisting = true;
+      i++;
+    } else if ((args[i] == '-d' || args[i] == '--directory') &&
+        i + 1 < args.length) {
+      destDir = args[i + 1];
+      i += 2;
+    } else {
+      dirs.add(args[i]);
+      i++;
+    }
+  }
+  if (dirs.isEmpty) {
+    stderr.writeln('$cmd: save directory name required.');
+    return 1;
+  }
+  if (overwriteExisting && ignoreExisting) {
+    stderr.writeln('$cmd: -f and -i are mutually exclusive.');
+    return 1;
+  }
+  int rc = 0;
+  for (final pattern in dirs) {
+    for (final savepath in mc.glob(pattern)) {
+      rc |= _extractSaveToFolder(cmd, mc, savepath,
+          destDir: destDir,
+          overwriteExisting: overwriteExisting,
+          ignoreExisting: ignoreExisting);
+    }
+  }
+  return rc;
+}
+
+/// `export-all` — extract every save on the card to host folders.
+int doExportAll(String cmd, Ps2MemoryCard mc, List<String> args) {
+  bool overwriteExisting = false;
+  bool ignoreExisting = false;
+  String? destDir;
+  int i = 0;
+  while (i < args.length) {
+    if (args[i] == '-f' || args[i] == '--overwrite-existing') {
+      overwriteExisting = true;
+      i++;
+    } else if (args[i] == '-i' || args[i] == '--ignore-existing') {
+      ignoreExisting = true;
+      i++;
+    } else if ((args[i] == '-d' || args[i] == '--directory') &&
+        i + 1 < args.length) {
+      destDir = args[i + 1];
+      i += 2;
+    } else {
+      i++;
+    }
+  }
+  if (overwriteExisting && ignoreExisting) {
+    stderr.writeln('$cmd: -f and -i are mutually exclusive.');
+    return 1;
+  }
+  int rc = 0;
+  final root = mc.dirOpen('/');
+  for (final ent in root) {
+    if (!ent.isDir || ent.name == '.' || ent.name == '..') continue;
+    rc |= _extractSaveToFolder(cmd, mc, '/${ent.name}',
+        destDir: destDir,
+        overwriteExisting: overwriteExisting,
+        ignoreExisting: ignoreExisting);
+  }
+  root.close();
   return rc;
 }
 
@@ -986,6 +1199,32 @@ Display save file information.
 Options:
   -h, --help  show this help message and exit''',
 
+  'export-all': '''Usage: dart_mymc memcard.ps2 export-all [options]
+
+Extract all saves on the card to host filesystem folders.
+
+Options:
+  -f, --overwrite-existing
+                        Overwrite files if an output folder already exists.
+  -i, --ignore-existing
+                        Skip saves whose output folder already exists.
+  -d DIRECTORY, --directory=DIRECTORY
+                        Create save folders inside "DIRECTORY".
+  -h, --help            show this help message and exit''',
+
+  'export-files': '''Usage: dart_mymc memcard.ps2 export-files [options] savedir ...
+
+Extract all files from save directories to host filesystem folders.
+
+Options:
+  -f, --overwrite-existing
+                        Overwrite files if the output folder already exists.
+  -i, --ignore-existing
+                        Skip saves whose output folder already exists.
+  -d DIRECTORY, --directory=DIRECTORY
+                        Create save folders inside "DIRECTORY".
+  -h, --help            show this help message and exit''',
+
   'export': '''Usage: dart_mymc memcard.ps2 export [options] directory ...
 
 Export save files from the memory card.
@@ -1030,13 +1269,23 @@ Options:
   'import': '''Usage: dart_mymc memcard.ps2 import [options] savefile ...
 
 Import save files into the memory card.
-Supported formats: .psu, .max, .sps, .cbs.
+Supported formats: .psu, .max, .sps, .cbs, or a raw save folder.
 
 Options:
   -i, --ignore-existing
                         Ignore files that already exist on the image.
   -d DEST, --directory=DEST
-                        Import to "DEST".
+                        Import packaged save to "DEST" (not used for folders).
+  -h, --help            show this help message and exit''',
+
+  'import-all': '''Usage: dart_mymc memcard.ps2 import-all [options] folder
+
+Import every subdirectory inside "folder" as a save on the memory card.
+Non-directory entries are skipped with a warning.
+
+Options:
+  -i, --ignore-existing
+                        Skip saves that already exist on the card.
   -h, --help            show this help message and exit''',
 
   'ls': '''Usage: dart_mymc memcard.ps2 ls [options] [directory ...]
@@ -1095,9 +1344,12 @@ const _commandDescriptions = {
   'df': 'Display the amount free space.',
   'dir': 'Display save file information.',
   'export': 'Export save files from the memory card.',
+  'export-all': 'Extract all saves to host filesystem folders.',
+  'export-files': 'Extract save files to host filesystem folders.',
   'extract': 'Extract files from the memory card.',
   'format': 'Creates a new memory card image.',
-  'import': 'Import save files into the memory card.',
+  'import': 'Import save files (or raw folders) into the memory card.',
+  'import-all': 'Import every subdirectory in a host folder as a save.',
   'ls': 'List the contents of a directory.',
   'mkdir': 'Make directories.',
   'remove': 'Remove files and directories.',
@@ -1188,8 +1440,17 @@ int runMain(List<String> arguments) {
       case 'import':
         return doImport(cmd, mc, subArgs);
 
+      case 'import-all':
+        return doImportAll(cmd, mc, subArgs);
+
       case 'export':
         return doExport(cmd, mc, subArgs);
+
+      case 'export-files':
+        return doExportFiles(cmd, mc, subArgs);
+
+      case 'export-all':
+        return doExportAll(cmd, mc, subArgs);
 
       case 'delete':
         return doDelete(cmd, mc, subArgs);

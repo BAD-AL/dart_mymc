@@ -974,6 +974,368 @@ void main() {
   // Phase 7 — Ps2Card public API (no dart:io in test code, no internal types)
   // -------------------------------------------------------------------------
 
+  // -------------------------------------------------------------------------
+  // Phase 8 — import folder + import-all (unit)
+  // -------------------------------------------------------------------------
+
+  group('Phase 8 — import folder and import-all (unit)', () {
+    late Directory tmpDir;
+    late String freshCard;
+
+    // Export all saves from the test card to a temp dir; returns the dir path.
+    String _exportAll() {
+      final exportDir =
+          Directory.systemTemp.createTempSync('dart_mymc_imp_setup_');
+      final srcMc = Ps2MemoryCard(testCard);
+      doExportAll('export-all', srcMc, ['-d', exportDir.path]);
+      srcMc.close();
+      return exportDir.path;
+    }
+
+    // Return an open fresh card (formatted, no ECC).
+    Ps2MemoryCard _freshMc() => Ps2MemoryCard(freshCard);
+
+    setUp(() {
+      tmpDir = Directory.systemTemp.createTempSync('dart_mymc_import_test_');
+      freshCard = p.join(tmpDir.path, 'fresh.ps2');
+      doFormat('format', freshCard, ['-e']);
+    });
+
+    tearDown(() {
+      tmpDir.deleteSync(recursive: true);
+    });
+
+    int _saveCount(Ps2MemoryCard mc) {
+      final root = mc.dirOpen('/');
+      final count =
+          root.where((e) => e.isDir && e.name != '.' && e.name != '..').length;
+      root.close();
+      return count;
+    }
+
+    test('import folder round-trips a single save', () {
+      final srcMc = Ps2MemoryCard(testCard);
+      doExportFiles('export-files', srcMc,
+          ['-d', tmpDir.path, '/BASLUS-20919NFL2K16']);
+      srcMc.close();
+
+      final mc = _freshMc();
+      try {
+        final rc = doImport(
+            'import', mc, [p.join(tmpDir.path, 'BASLUS-20919NFL2K16')]);
+        expect(rc, equals(0));
+        expect(_saveCount(mc), equals(1));
+      } finally {
+        mc.close();
+      }
+    });
+
+    test('import folder -i skips when save already exists on card', () {
+      final srcMc = Ps2MemoryCard(testCard);
+      doExportFiles('export-files', srcMc,
+          ['-d', tmpDir.path, '/BASLUS-20919NFL2K16']);
+      srcMc.close();
+
+      final mc = _freshMc();
+      try {
+        final folderPath = p.join(tmpDir.path, 'BASLUS-20919NFL2K16');
+        expect(doImport('import', mc, [folderPath]), equals(0));
+        expect(doImport('import', mc, [folderPath]), equals(1));
+        expect(doImport('import', mc, ['-i', folderPath]), equals(0));
+        expect(_saveCount(mc), equals(1)); // still just the one save
+      } finally {
+        mc.close();
+      }
+    });
+
+    test('import-all imports all 5 saves from exported folder', () {
+      final exportDir = _exportAll();
+      final mc = _freshMc();
+      try {
+        final rc = doImportAll('import-all', mc, [exportDir]);
+        expect(rc, equals(0));
+        expect(_saveCount(mc), equals(5));
+      } finally {
+        mc.close();
+        Directory(exportDir).deleteSync(recursive: true);
+      }
+    });
+
+    test('import-all -i skips already-imported saves', () {
+      final exportDir = _exportAll();
+      final mc = _freshMc();
+      try {
+        doImportAll('import-all', mc, [exportDir]);
+        final rc = doImportAll('import-all', mc, ['-i', exportDir]);
+        expect(rc, equals(0));
+        expect(_saveCount(mc), equals(5));
+      } finally {
+        mc.close();
+        Directory(exportDir).deleteSync(recursive: true);
+      }
+    });
+
+    test('import-all skips non-directory entries with a warning', () {
+      // Put a stray file alongside a real save dir.
+      File(p.join(tmpDir.path, 'readme.txt')).writeAsStringSync('stray');
+      final srcMc = Ps2MemoryCard(testCard);
+      doExportFiles('export-files', srcMc,
+          ['-d', tmpDir.path, '/BASLUS-20919NFL2K16']);
+      srcMc.close();
+
+      final mc = _freshMc();
+      try {
+        final rc = doImportAll('import-all', mc, [tmpDir.path]);
+        expect(rc, equals(0));
+        // Only the directory was imported; stray file and fresh.ps2 skipped.
+        expect(_saveCount(mc), equals(1));
+      } finally {
+        mc.close();
+      }
+    });
+
+    test('import-all errors when source folder does not exist', () {
+      final mc = _freshMc();
+      try {
+        expect(doImportAll('import-all', mc, ['/nonexistent_xyz']), equals(1));
+      } finally {
+        mc.close();
+      }
+    });
+
+    test('import-all requires a source folder argument', () {
+      final mc = _freshMc();
+      try {
+        expect(doImportAll('import-all', mc, []), equals(1));
+      } finally {
+        mc.close();
+      }
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Phase 8 CLI — import-all
+  // -------------------------------------------------------------------------
+
+  group('Phase 8 CLI integration — import-all', () {
+    late Directory tmpDir;
+
+    setUp(() {
+      tmpDir = Directory.systemTemp.createTempSync('dart_mymc_cli_impall_');
+    });
+
+    tearDown(() {
+      tmpDir.deleteSync(recursive: true);
+    });
+
+    test('import-all CLI round-trips all saves via export-all', () async {
+      // Export all saves to a temp folder.
+      final expResult = await Process.run('dart', [
+        'run', 'bin/dart_mymc.dart', testCard,
+        'export-all', '-d', tmpDir.path,
+      ]);
+      expect(expResult.exitCode, equals(0));
+
+      // Format a fresh card.
+      final freshCard = p.join(tmpDir.path, 'fresh.ps2');
+      await Process.run('dart',
+          ['run', 'bin/dart_mymc.dart', freshCard, 'format']);
+
+      // Import all back in.
+      final impResult = await Process.run('dart', [
+        'run', 'bin/dart_mymc.dart', freshCard,
+        'import-all', tmpDir.path,
+      ]);
+      expect(impResult.exitCode, equals(0));
+
+      // Check dir shows the NFL title.
+      final dirResult = await Process.run('dart',
+          ['run', 'bin/dart_mymc.dart', freshCard, 'dir']);
+      expect(dirResult.exitCode, equals(0));
+      expect(dirResult.stdout.toString(), contains('ESPN NFL 2K5'));
+    }, timeout: const Timeout(Duration(seconds: 120)));
+  });
+
+  // -------------------------------------------------------------------------
+  // Phase 8 — export-files and export-all (unit)
+  // -------------------------------------------------------------------------
+
+  group('Phase 8 — export-files and export-all (unit)', () {
+    late Directory tmpDir;
+
+    setUp(() {
+      tmpDir = Directory.systemTemp.createTempSync('dart_mymc_expfiles_');
+    });
+
+    tearDown(() {
+      tmpDir.deleteSync(recursive: true);
+    });
+
+    test('export-files extracts save files to a host folder', () {
+      final mc = Ps2MemoryCard(testCard);
+      try {
+        final rc = doExportFiles(
+            'export-files', mc, ['-d', tmpDir.path, '/BASLUS-20919NFL2K16']);
+        expect(rc, equals(0));
+        final outDir =
+            Directory(p.join(tmpDir.path, 'BASLUS-20919NFL2K16'));
+        expect(outDir.existsSync(), isTrue);
+        expect(outDir.listSync().whereType<File>().toList(), isNotEmpty);
+      } finally {
+        mc.close();
+      }
+    });
+
+    test('export-files -i skips save when folder already exists', () {
+      final mc = Ps2MemoryCard(testCard);
+      try {
+        final outDir =
+            Directory(p.join(tmpDir.path, 'BASLUS-20919NFL2K16'))
+              ..createSync();
+        final rc = doExportFiles('export-files', mc,
+            ['-i', '-d', tmpDir.path, '/BASLUS-20919NFL2K16']);
+        expect(rc, equals(0));
+        // Folder still empty — nothing was written.
+        expect(outDir.listSync().whereType<File>().toList(), isEmpty);
+      } finally {
+        mc.close();
+      }
+    });
+
+    test('export-files errors when folder exists without -f or -i', () {
+      final mc = Ps2MemoryCard(testCard);
+      try {
+        Directory(p.join(tmpDir.path, 'BASLUS-20919NFL2K16')).createSync();
+        final rc = doExportFiles('export-files', mc,
+            ['-d', tmpDir.path, '/BASLUS-20919NFL2K16']);
+        expect(rc, equals(1));
+      } finally {
+        mc.close();
+      }
+    });
+
+    test('export-files -f overwrites into existing folder', () {
+      final mc = Ps2MemoryCard(testCard);
+      try {
+        final outDir =
+            Directory(p.join(tmpDir.path, 'BASLUS-20919NFL2K16'))
+              ..createSync();
+        final rc = doExportFiles('export-files', mc,
+            ['-f', '-d', tmpDir.path, '/BASLUS-20919NFL2K16']);
+        expect(rc, equals(0));
+        expect(outDir.listSync().whereType<File>().toList(), isNotEmpty);
+      } finally {
+        mc.close();
+      }
+    });
+
+    test('export-files rejects mutually exclusive -f and -i', () {
+      final mc = Ps2MemoryCard(testCard);
+      try {
+        final rc = doExportFiles('export-files', mc,
+            ['-f', '-i', '/BASLUS-20919NFL2K16']);
+        expect(rc, equals(1));
+      } finally {
+        mc.close();
+      }
+    });
+
+    test('export-files requires at least one save directory argument', () {
+      final mc = Ps2MemoryCard(testCard);
+      try {
+        final rc = doExportFiles('export-files', mc, []);
+        expect(rc, equals(1));
+      } finally {
+        mc.close();
+      }
+    });
+
+    test('export-all extracts all 5 saves to host folders', () {
+      final mc = Ps2MemoryCard(testCard);
+      try {
+        final rc =
+            doExportAll('export-all', mc, ['-d', tmpDir.path]);
+        expect(rc, equals(0));
+        final extracted =
+            tmpDir.listSync().whereType<Directory>().toList();
+        expect(extracted.length, equals(5));
+        // Every extracted folder should contain at least one file.
+        for (final dir in extracted) {
+          expect(dir.listSync().whereType<File>().toList(), isNotEmpty,
+              reason: '${dir.path} should contain files');
+        }
+      } finally {
+        mc.close();
+      }
+    });
+
+    test('export-all -i skips existing folders', () {
+      final mc = Ps2MemoryCard(testCard);
+      try {
+        // Pre-create one save folder.
+        Directory(p.join(tmpDir.path, 'BASLUS-20919NFL2K16')).createSync();
+        final rc =
+            doExportAll('export-all', mc, ['-i', '-d', tmpDir.path]);
+        expect(rc, equals(0));
+        // 5 folders total: 4 newly created + 1 skipped (still empty).
+        final dirs = tmpDir.listSync().whereType<Directory>().toList();
+        expect(dirs.length, equals(5));
+        final skipped =
+            Directory(p.join(tmpDir.path, 'BASLUS-20919NFL2K16'));
+        expect(skipped.listSync().whereType<File>().toList(), isEmpty);
+      } finally {
+        mc.close();
+      }
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // Phase 8 CLI integration — export-files and export-all
+  // -------------------------------------------------------------------------
+
+  group('Phase 8 CLI integration — export-files and export-all', () {
+    late Directory tmpDir;
+
+    setUp(() {
+      tmpDir = Directory.systemTemp.createTempSync('dart_mymc_cli_expfiles_');
+    });
+
+    tearDown(() {
+      tmpDir.deleteSync(recursive: true);
+    });
+
+    test('export-files CLI extracts save to a folder', () async {
+      final result = await Process.run('dart', [
+        'run',
+        'bin/dart_mymc.dart',
+        testCard,
+        'export-files',
+        '-d',
+        tmpDir.path,
+        '/BASLUS-20919NFL2K16',
+      ]);
+      expect(result.exitCode, equals(0));
+      final outDir =
+          Directory(p.join(tmpDir.path, 'BASLUS-20919NFL2K16'));
+      expect(outDir.existsSync(), isTrue);
+      expect(outDir.listSync().whereType<File>().toList(), isNotEmpty);
+    }, timeout: const Timeout(Duration(seconds: 60)));
+
+    test('export-all CLI extracts all 5 saves', () async {
+      final result = await Process.run('dart', [
+        'run',
+        'bin/dart_mymc.dart',
+        testCard,
+        'export-all',
+        '-d',
+        tmpDir.path,
+      ]);
+      expect(result.exitCode, equals(0));
+      final dirs = tmpDir.listSync().whereType<Directory>().toList();
+      expect(dirs.length, equals(5));
+    }, timeout: const Timeout(Duration(seconds: 60)));
+  });
+
   group('Phase 7 — Ps2Card public API', () {
     test('formatMemory: card has free space and no saves', () {
       final card = Ps2Card.formatMemory();
