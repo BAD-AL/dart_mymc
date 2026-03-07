@@ -7,6 +7,7 @@ import 'dart:collection';
 import 'dart:typed_data';
 
 import 'ps2card_io.dart';
+import 'ps2card_io_native.dart'; // FileCardIo — native file-backed card I/O
 import 'ps2mc_dir.dart';
 import 'ps2mc_ecc.dart';
 import 'ps2save.dart';
@@ -2094,6 +2095,19 @@ class Ps2MemoryCard {
     rootDir.close();
 
     flush();
+  }
+
+  /// Returns the card image as a [Uint8List].
+  /// Only available for memory-backed cards (created with [Ps2Card.formatMemory]
+  /// or [Ps2Card.openMemory]). Throws [UnsupportedError] for file-backed cards.
+  Uint8List toBytes() {
+    if (_io is MemoryCardIo) {
+      flush();
+      if (modified) writeSuperblock();
+      return (_io as MemoryCardIo).toBytes();
+    }
+    throw UnsupportedError(
+        'toBytes() is only available for memory-backed cards');
   }
 
   void close() {

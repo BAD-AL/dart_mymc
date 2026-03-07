@@ -111,37 +111,37 @@ import 'package:dart_mymc/dart_mymc.dart';
 
 ### Core types
 
+Public types in [ps2card.dart](lib/src/ps2card.dart)
+
 | Type | Description |
 |---|---|
 | `Ps2Card` | Main entry point — open, format, import, export, delete |
-| `Ps2Save` | A save file in memory — load from bytes or folder, convert to bytes |
+| `Ps2Save` | A save file in memory — load from bytes or a file map, convert to bytes |
+| `Ps2FileInfo` | One file inside a `Ps2Save`: name, size, and `toBytes()` |
 | `Ps2CardInfo` | Snapshot of card state: free/total bytes + save list |
 | `Ps2SaveInfo` | Metadata for one save: dir name, title, size, modified date |
 | `Ps2SaveFormat` | Enum: `psu`, `max`, `sps`, `cbs` |
 | `Ps2CardIo` | I/O interface (implement for custom backends / WASM) |
-| `FileCardIo` | `dart:io`-backed I/O (used by default for file paths) |
-| `MemoryCardIo` | `Uint8List`-backed I/O (in-memory, no files) |
+| `FileCardIo` | `dart:io`-backed I/O (native use only) |
+| `MemoryCardIo` | `Uint8List`-backed I/O (web-safe, no files) |
 
 ### Create / format a card
 
 ```dart
-// Format a new card file on disk
-Ps2Card card = Ps2Card.formatFile('new.ps2');
+// Format a blank card in memory (web-safe)
+Ps2Card card = Ps2Card.format();
+// ... use card ...
+Uint8List cardBytes = card.toBytes();  // get the finished image
 card.close();
 
-// Format a card entirely in memory (no disk I/O)
-Ps2Card card = Ps2Card.formatMemory();
-// ... use card ...
-card.close();
+// Persist to disk (native only)
+File('new.ps2').writeAsBytesSync(cardBytes);
 ```
 
 ### Open an existing card
 
 ```dart
-// From a file path
-Ps2Card card = Ps2Card.openFile('Mcd001.ps2');
-
-// From raw bytes (e.g. loaded from a database or network)
+// From raw bytes (web-safe)
 Uint8List bytes = File('Mcd001.ps2').readAsBytesSync();
 Ps2Card card = Ps2Card.openMemory(bytes);
 ```
@@ -149,7 +149,8 @@ Ps2Card card = Ps2Card.openMemory(bytes);
 ### List saves
 
 ```dart
-Ps2Card card = Ps2Card.openFile('Mcd001.ps2');
+Uint8List cardBytes = File('Mcd001.ps2').readAsBytesSync();
+Ps2Card card = Ps2Card.openMemory(cardBytes);
 try {
   List<Ps2SaveInfo> saves = card.listSaves();
   for (Ps2SaveInfo save in saves) {
@@ -167,7 +168,8 @@ try {
 ### Import a save
 
 ```dart
-Ps2Card card = Ps2Card.openFile('Mcd001.ps2');
+Uint8List cardBytes = File('Mcd001.ps2').readAsBytesSync();
+Ps2Card card = Ps2Card.openMemory(cardBytes);
 try {
   // From a packaged save file — format is auto-detected (.psu, .max, .sps, .cbs)
   Uint8List saveBytes = File('NFL2K16.psu').readAsBytesSync();
@@ -175,6 +177,9 @@ try {
 
   // Allow overwriting an existing save with the same directory name
   card.importSave(saveBytes, overwrite: true);
+
+  // Persist changes back to disk
+  File('Mcd001.ps2').writeAsBytesSync(card.toBytes());
 } finally {
   card.close();
 }
@@ -183,7 +188,8 @@ try {
 ### Export a save
 
 ```dart
-Ps2Card card = Ps2Card.openFile('Mcd001.ps2');
+Uint8List cardBytes = File('Mcd001.ps2').readAsBytesSync();
+Ps2Card card = Ps2Card.openMemory(cardBytes);
 try {
   // Export as PSU (default)
   Uint8List psuBytes = card.exportSave('BASLUS-20919NFL2K16');
@@ -201,9 +207,11 @@ try {
 ### Delete a save
 
 ```dart
-Ps2Card card = Ps2Card.openFile('Mcd001.ps2');
+Uint8List cardBytes = File('Mcd001.ps2').readAsBytesSync();
+Ps2Card card = Ps2Card.openMemory(cardBytes);
 try {
   card.deleteSave('BASLUS-20919NFL2K16');
+  File('Mcd001.ps2').writeAsBytesSync(card.toBytes());
 } finally {
   card.close();
 }
@@ -211,7 +219,8 @@ try {
 
 ### Work with saves standalone
 
-`Ps2Save` works without a card — useful for format conversion or inspection:
+`Ps2Save` works without a card — useful for format conversion, inspection, or building
+saves from raw bytes:
 
 ```dart
 // Load from a packaged save file (format auto-detected)
@@ -221,42 +230,46 @@ Ps2Save save = Ps2Save.fromBytes(psuBytes);
 print(save.dirName);  // BASLUS-20919NFL2K16
 print(save.title);    // ESPN NFL 2K5 NFL21Ros
 
+// List files inside the save
+for (Ps2FileInfo f in save.files) {
+  print('${f.name}  ${f.sizeBytes} bytes');
+  // f.toBytes() — raw bytes of the file
+}
+
 // Convert to MAX Drive format
 Uint8List maxBytes = save.toBytes(format: Ps2SaveFormat.max);
 File('NFL2K16.max').writeAsBytesSync(maxBytes);
 ```
 
 ```dart
-// Load from a raw folder on the host filesystem
-// (the folder name becomes the save directory name on the card)
-Ps2Save save = Ps2Save.fromFolder('my_saves/BASLUS-20919NFL2K16');
-
-print(save.dirName);  // BASLUS-20919NFL2K16
-print(save.title);    // ESPN NFL 2K5 NFL21Ros
+// Build a save from a map of filename → bytes (web-safe)
+Map<String, Uint8List> fileMap = {
+  'icon.sys': File('icon.sys').readAsBytesSync(),
+  'BADATA-SYSTEM': File('BADATA-SYSTEM').readAsBytesSync(),
+};
+Ps2Save save = Ps2Save.fromFiles('BASLUS-20919NFL2K16', fileMap);
 
 // Import into a card
-Ps2Card card = Ps2Card.openFile('card.ps2');
+Uint8List cardBytes = File('card.ps2').readAsBytesSync();
+Ps2Card card = Ps2Card.openMemory(cardBytes);
 try {
   card.importSave(save.toBytes());
+  File('card.ps2').writeAsBytesSync(card.toBytes());
 } finally {
   card.close();
 }
-
-// Or convert to a packaged file
-Uint8List psuBytes = save.toBytes();
-File('NFL2K16.psu').writeAsBytesSync(psuBytes);
 ```
 
 ### Create a new card from saves (fully in-memory)
 
 ```dart
-Ps2Card card = Ps2Card.formatMemory();
+Ps2Card card = Ps2Card.format();
 try {
   for (String path in ['save1.psu', 'save2.max']) {
     card.importSave(File(path).readAsBytesSync());
   }
   // Write the finished card to disk
-  // (access the underlying bytes via MemoryCardIo if needed)
+  File('new.ps2').writeAsBytesSync(card.toBytes());
 } finally {
   card.close();
 }
@@ -299,7 +312,3 @@ dart analyze       # static analysis
 dart run bin/dart_mymc.dart --help
 ```
 
-Python 2.7 is used as the reference implementation for parity testing.
-Golden output files in `test/test_files/` were generated from
-`mymc-pysrc-2.7/mymc.py` and are compared byte-for-byte in the test suite.
-See `test/README.md` for details.

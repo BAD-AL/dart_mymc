@@ -99,12 +99,6 @@ String usage =
 # Import a MAX Drive save file onto the card (import)
 \$ mymc card.ps2 import NFL2K16.max
 
-# Import a SharkPort save file onto the card (import)
-\$ mymc card.ps2 import NFL2K16.sps
-
-# Import a CodeBreaker save file onto the card (import)
-\$ mymc card.ps2 import NFL2K16.cbs
-
 # Import a save, skipping silently if it already exists on the card (import)
 \$ mymc card.ps2 import -i NFL2K16.psu
 

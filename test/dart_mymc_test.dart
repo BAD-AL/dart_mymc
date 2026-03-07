@@ -1337,8 +1337,8 @@ void main() {
   });
 
   group('Phase 7 — Ps2Card public API', () {
-    test('formatMemory: card has free space and no saves', () {
-      final card = Ps2Card.formatMemory();
+    test('format: card has free space and no saves', () {
+      final card = Ps2Card.format();
       try {
         final info = card.info;
         expect(info.freeBytes, greaterThan(0));
@@ -1348,8 +1348,8 @@ void main() {
       }
     });
 
-    test('openFile: listSaves returns correct count and titles', () {
-      final card = Ps2Card.openFile(testCard);
+    test('openMemory: listSaves returns correct count and titles', () {
+      final card = Ps2Card.openMemory(File(testCard).readAsBytesSync());
       try {
         final saves = card.listSaves();
         expect(saves.length, equals(5)); // excludes . and ..
@@ -1365,7 +1365,7 @@ void main() {
       final psuBytes = File('test/test_files/NFL2K16.psu').readAsBytesSync();
       final original = Ps2Save.fromBytes(psuBytes);
 
-      final card = Ps2Card.formatMemory();
+      final card = Ps2Card.format();
       try {
         card.importSave(psuBytes);
         final exportedBytes = card.exportSave('BASLUS-20919NFL2K16');
@@ -1379,23 +1379,30 @@ void main() {
       }
     });
 
-    test('Ps2Save.fromFolder: round-trips a save via export-files', () {
-      // Export a save to a host folder.
+    test('Ps2Save.fromFiles: round-trips a save via export-files', () {
+      // Export a save to a host folder, then reload via fromFiles.
       final tmpDir =
-          Directory.systemTemp.createTempSync('dart_mymc_fromfolder_');
+          Directory.systemTemp.createTempSync('dart_mymc_fromfiles_');
       try {
         final srcMc = Ps2MemoryCard(testCard);
         doExportFiles('export-files', srcMc,
             ['-d', tmpDir.path, '/BASLUS-20919NFL2K16']);
         srcMc.close();
 
-        final save =
-            Ps2Save.fromFolder(p.join(tmpDir.path, 'BASLUS-20919NFL2K16'));
+        // Build the map from the exported folder.
+        final hostDir =
+            Directory(p.join(tmpDir.path, 'BASLUS-20919NFL2K16'));
+        final fileMap = <String, Uint8List>{};
+        for (final f in hostDir.listSync().whereType<File>()) {
+          fileMap[p.basename(f.path)] = f.readAsBytesSync();
+        }
+
+        final save = Ps2Save.fromFiles('BASLUS-20919NFL2K16', fileMap);
         expect(save.dirName, equals('BASLUS-20919NFL2K16'));
         expect(save.title, contains('ESPN NFL 2K5'));
 
         // Round-trip: import into a fresh card and verify.
-        final card = Ps2Card.formatMemory();
+        final card = Ps2Card.format();
         try {
           card.importSave(save.toBytes());
           expect(card.listSaves().map((s) => s.dirName),
@@ -1410,7 +1417,7 @@ void main() {
 
     test('deleteSave: save no longer appears in listSaves', () {
       final psuBytes = File('test/test_files/NFL2K16.psu').readAsBytesSync();
-      final card = Ps2Card.formatMemory();
+      final card = Ps2Card.format();
       try {
         card.importSave(psuBytes);
         expect(card.listSaves().map((s) => s.dirName),

@@ -4,7 +4,6 @@
 // Hides internal types (Ps2MemoryCard, Ps2SaveFile, PS2DirEntry, etc.)
 // behind simple value types and factory constructors.
 
-import 'dart:io'; // File — used only in openFile / formatFile factories
 import 'dart:typed_data';
 
 import 'ps2card_io.dart';
@@ -47,6 +46,18 @@ class Ps2CardInfo {
   });
 }
 
+/// A single file inside a [Ps2Save], with its name, size, and raw bytes.
+class Ps2FileInfo {
+  final String name;
+  final int sizeBytes;
+  final Uint8List _bytes;
+  const Ps2FileInfo({required this.name, required this.sizeBytes, required Uint8List bytes})
+      : _bytes = bytes;
+
+  /// Returns the raw bytes of this file.
+  Uint8List toBytes() => _bytes;
+}
+
 // ---------------------------------------------------------------------------
 // Ps2Save — public wrapper around Ps2SaveFile
 // ---------------------------------------------------------------------------
@@ -55,34 +66,24 @@ class Ps2Save {
   final Ps2SaveFile _sf;
   Ps2Save._(this._sf);
 
-  /// Load a raw save from a host filesystem folder.
-  /// Every file in [path] is included (subdirectories are ignored).
-  /// The save directory name is taken from the last path component.
-  factory Ps2Save.fromFolder(String path) {
-    final dir = Directory(path);
-    if (!dir.existsSync()) {
-      throw ArgumentError('Folder not found: $path');
-    }
-    final dirName = path.split(Platform.pathSeparator).last;
-    final entries = dir
-        .listSync()
-        .whereType<File>()
-        .toList()
-      ..sort((a, b) => a.path.compareTo(b.path));
+  /// Build a save from an in-memory map of filename → bytes.
+  /// [dirName] becomes the save directory name on the card.
+  /// Keys in [files] must be plain filenames (no path separators).
+  factory Ps2Save.fromFiles(String dirName, Map<String, Uint8List> files) {
     final ts = todNow();
     final sf = Ps2SaveFile();
+    final names = files.keys.toList()..sort();
     sf.setDirectory(PS2DirEntry(
       mode: dfRwx | dfDir | df0400 | dfExists,
-      length: entries.length,
+      length: names.length,
       created: ts,
       fatCluster: 0,
       parentEntry: 0,
       modified: ts,
       name: dirName,
     ));
-    for (int i = 0; i < entries.length; i++) {
-      final data = entries[i].readAsBytesSync();
-      final filename = entries[i].path.split(Platform.pathSeparator).last;
+    for (int i = 0; i < names.length; i++) {
+      final data = files[names[i]]!;
       sf.setFile(
         i,
         PS2DirEntry(
@@ -92,7 +93,7 @@ class Ps2Save {
           fatCluster: 0,
           parentEntry: 0,
           modified: ts,
-          name: filename,
+          name: names[i],
         ),
         data,
       );
@@ -131,6 +132,15 @@ class Ps2Save {
     return combined.isEmpty ? dirName : combined;
   }
 
+  /// Every file stored in this save, with name, size, and raw bytes.
+  List<Ps2FileInfo> get files {
+    final dir = _sf.getDirectory();
+    return List.generate(dir.length, (int i) {
+      final (PS2DirEntry ent, Uint8List data) = _sf.getFile(i);
+      return Ps2FileInfo(name: ent.name, sizeBytes: ent.length, bytes: data);
+    });
+  }
+
   Uint8List toBytes({Ps2SaveFormat format = Ps2SaveFormat.psu}) {
     final mio = MemorySaveIo();
     switch (format) {
@@ -143,7 +153,7 @@ class Ps2Save {
       case Ps2SaveFormat.cbs:
         _sf.saveCbs(mio);
     }
-    return mio.bytes;
+    return mio.toBytes();
   }
 }
 
@@ -155,10 +165,6 @@ class Ps2Card {
   final Ps2MemoryCard _mc;
   Ps2Card._(this._mc);
 
-  /// Open an existing card image from a file path.
-  factory Ps2Card.openFile(String path, {bool ignoreEcc = false}) =>
-      Ps2Card._(Ps2MemoryCard(path, ignoreEcc: ignoreEcc));
-
   /// Open a card from a custom [Ps2CardIo] backend (e.g. a network or WASM buffer).
   factory Ps2Card.fromIo(Ps2CardIo io, {bool ignoreEcc = false}) =>
       Ps2Card._(Ps2MemoryCard.fromIo(io, ignoreEcc: ignoreEcc));
@@ -168,21 +174,8 @@ class Ps2Card {
       Ps2Card._(Ps2MemoryCard.fromIo(MemoryCardIo(bytes),
           ignoreEcc: ignoreEcc));
 
-  /// Format a blank card into a new file on disk.
-  factory Ps2Card.formatFile(String path, {bool overwrite = false}) {
-    if (!overwrite && File(path).existsSync()) {
-      throw Ps2McIoError('file exists', path);
-    }
-    return Ps2Card._(Ps2MemoryCard(path, formatParams: [
-      1,
-      ps2mcStandardPageSize,
-      ps2mcStandardPagesPerEraseBlock,
-      ps2mcStandardPagesPerCard
-    ]));
-  }
-
   /// Format a blank card entirely in memory (no files created).
-  factory Ps2Card.formatMemory() {
+  factory Ps2Card.format() {
     final rawPageSize = ps2mcStandardPageSize + 16; // 512 + spare(16)
     final totalBytes = ps2mcStandardPagesPerCard * rawPageSize;
     final io = MemoryCardIo.blank(totalBytes);
@@ -244,6 +237,10 @@ class Ps2Card {
 
   /// Delete a save directory and all its files.
   void deleteSave(String dirName) => _mc.rmdir(dirName);
+
+  /// Returns the card image as a [Uint8List].
+  /// Only available for memory-backed cards; throws [UnsupportedError] otherwise.
+  Uint8List toBytes() => _mc.toBytes();
 
   void close() => _mc.close();
 }
