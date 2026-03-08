@@ -1,10 +1,13 @@
 # dart_mymc
 
-A Dart port (+ enhancements) of [mymc](http://www.csclub.uwaterloo.ca/~mskala/programs/mymc/), a PS2 Memory Card manager originally written in Python 2.7 by Ross Ridge.
+A Dart port (+ enhancements) of the PS2 memory card program 'mymc' [original link](http://www.csclub.uwaterloo.ca:11068/mymc/), [GitHub repo](https://github.com/ps2dev/mymc), 
+a PS2 Memory Card manager originally written in Python 2.7 by Ross Ridge.
 
-Supports reading and writing standard 8 MB PS2 memory card images (`.ps2`),
-importing and exporting saves in four formats (`.psu`, `.max`, `.sps`, `.cbs`),
-and converting between formats. [Note: formats `.sps`, `.cbs` not tested]
+This project can be used from the command-line (try `mymc usage <command>` to see various example usages) or as a library (see Public API below).
+
+Supports reading and writing PS2 Save files (.max, .psu) and standard 8 MB PS2 memory card images (`.ps2`),
+importing and exporting saves in formats: [`.psu`, `.max`],
+and converting between formats. [Note: formats `.sps`, `.cbs` may work but are not tested]
 
 ---
 Why dart?
@@ -312,3 +315,5 @@ dart analyze       # static analysis
 dart run bin/dart_mymc.dart --help
 ```
 
+## Development Notes
+Claude and Gemini were utilized in development of this project.
