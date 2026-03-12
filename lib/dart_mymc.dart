@@ -6,7 +6,6 @@ library dart_mymc;
 
 // Public API — stable facade layer
 export 'src/ps2card_io.dart'; // Ps2CardIo, SaveIo, MemoryCardIo, MemorySaveIo
-export 'src/ps2card_io_native.dart'; // FileCardIo, FileSaveIo (native only)
 export 'src/ps2card.dart'; // Ps2Card, Ps2Save, Ps2SaveInfo, Ps2CardInfo, Ps2SaveFormat
 
 // Exception types — consumers need to catch these
