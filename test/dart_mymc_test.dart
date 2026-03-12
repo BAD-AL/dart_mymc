@@ -28,7 +28,7 @@ void main() {
     late Ps2MemoryCard mc;
 
     setUp(() {
-      mc = Ps2MemoryCard(testCard);
+      mc = openCardFile(testCard);
     });
 
     tearDown(() => mc.close());
@@ -250,7 +250,7 @@ void main() {
     // -------------------------------------------------------------------------
 
     test('format creates a valid card with free space', () {
-      final mc = Ps2MemoryCard(freshCard,
+      final mc = openCardFile(freshCard,
           formatParams: [
             1,
             ps2mcStandardPageSize,
@@ -263,7 +263,7 @@ void main() {
     });
 
     test('format: root dir has "." and ".." entries', () {
-      final mc = Ps2MemoryCard(freshCard,
+      final mc = openCardFile(freshCard,
           formatParams: [
             1,
             ps2mcStandardPageSize,
@@ -283,7 +283,7 @@ void main() {
     // -------------------------------------------------------------------------
 
     test('mkdir creates a directory visible in ls', () {
-      final mc = Ps2MemoryCard(freshCard,
+      final mc = openCardFile(freshCard,
           formatParams: [
             1,
             ps2mcStandardPageSize,
@@ -299,7 +299,7 @@ void main() {
     });
 
     test('mkdir: directory not found error for bad parent', () {
-      final mc = Ps2MemoryCard(freshCard,
+      final mc = openCardFile(freshCard,
           formatParams: [
             1,
             ps2mcStandardPageSize,
@@ -309,7 +309,7 @@ void main() {
       mc.close();
       // Open read-only; trying to mkdir should fail gracefully when parent
       // doesn't exist — re-open and test via pathSearch.
-      final mc2 = Ps2MemoryCard(freshCard);
+      final mc2 = openCardFile(freshCard);
       expect(
         () => mc2.mkdir('/NONEXIST/SUBDIR'),
         throwsA(isA<Ps2McError>()),
@@ -322,7 +322,7 @@ void main() {
     // -------------------------------------------------------------------------
 
     test('write and read file round-trip', () {
-      final mc = Ps2MemoryCard(freshCard,
+      final mc = openCardFile(freshCard,
           formatParams: [
             1,
             ps2mcStandardPageSize,
@@ -350,7 +350,7 @@ void main() {
     // -------------------------------------------------------------------------
 
     test('remove deletes a file; it no longer appears in ls', () {
-      final mc = Ps2MemoryCard(freshCard,
+      final mc = openCardFile(freshCard,
           formatParams: [
             1,
             ps2mcStandardPageSize,
@@ -378,7 +378,7 @@ void main() {
     // -------------------------------------------------------------------------
 
     test('delete removes a save directory and frees space', () {
-      final mc = Ps2MemoryCard(freshCard,
+      final mc = openCardFile(freshCard,
           formatParams: [
             1,
             ps2mcStandardPageSize,
@@ -404,12 +404,12 @@ void main() {
 
     test('exportSaveFile / importSaveFile PSU round-trip', () {
       // Export NFL2K16 from test card.
-      final mc = Ps2MemoryCard(testCard);
+      final mc = openCardFile(testCard);
       final sf = mc.exportSaveFile('/BASLUS-20919NFL2K16');
       mc.close();
 
       // Import into fresh card.
-      final mc2 = Ps2MemoryCard(freshCard,
+      final mc2 = openCardFile(freshCard,
           formatParams: [
             1,
             ps2mcStandardPageSize,
@@ -431,7 +431,7 @@ void main() {
 
     test('saveEms / loadEms round-trip via file', () {
       // Export NFL2K16 from test card to a .psu file.
-      final mc = Ps2MemoryCard(testCard);
+      final mc = openCardFile(testCard);
       final sf = mc.exportSaveFile('/BASLUS-20919NFL2K16');
       mc.close();
 
@@ -832,7 +832,7 @@ void main() {
       expect(exitCode, equals(0));
 
       // Verify the card contains the save.
-      final mc = Ps2MemoryCard(cardPath);
+      final mc = openCardFile(cardPath);
       mc.chdir('/BASLUS-20919NFL2K16');
       final raw = mc.getIconSys('.');
       mc.close();
@@ -848,7 +848,7 @@ void main() {
           ['test/test_files/NFL2K16.max']);
       expect(exitCode, equals(0));
 
-      final mc = Ps2MemoryCard(cardPath);
+      final mc = openCardFile(cardPath);
       mc.chdir('/BASLUS-20919NFL2K16');
       final raw = mc.getIconSys('.');
       mc.close();
@@ -988,14 +988,14 @@ void main() {
     String _exportAll() {
       final exportDir =
           Directory.systemTemp.createTempSync('dart_mymc_imp_setup_');
-      final srcMc = Ps2MemoryCard(testCard);
+      final srcMc = openCardFile(testCard);
       doExportAll('export-all', srcMc, ['-d', exportDir.path]);
       srcMc.close();
       return exportDir.path;
     }
 
     // Return an open fresh card (formatted, no ECC).
-    Ps2MemoryCard _freshMc() => Ps2MemoryCard(freshCard);
+    Ps2MemoryCard _freshMc() => openCardFile(freshCard);
 
     setUp(() {
       tmpDir = Directory.systemTemp.createTempSync('dart_mymc_import_test_');
@@ -1016,7 +1016,7 @@ void main() {
     }
 
     test('import folder round-trips a single save', () {
-      final srcMc = Ps2MemoryCard(testCard);
+      final srcMc = openCardFile(testCard);
       doExportFiles('export-files', srcMc,
           ['-d', tmpDir.path, '/BASLUS-20919NFL2K16']);
       srcMc.close();
@@ -1033,7 +1033,7 @@ void main() {
     });
 
     test('import folder -i skips when save already exists on card', () {
-      final srcMc = Ps2MemoryCard(testCard);
+      final srcMc = openCardFile(testCard);
       doExportFiles('export-files', srcMc,
           ['-d', tmpDir.path, '/BASLUS-20919NFL2K16']);
       srcMc.close();
@@ -1080,7 +1080,7 @@ void main() {
     test('import-all skips non-directory entries with a warning', () {
       // Put a stray file alongside a real save dir.
       File(p.join(tmpDir.path, 'readme.txt')).writeAsStringSync('stray');
-      final srcMc = Ps2MemoryCard(testCard);
+      final srcMc = openCardFile(testCard);
       doExportFiles('export-files', srcMc,
           ['-d', tmpDir.path, '/BASLUS-20919NFL2K16']);
       srcMc.close();
@@ -1174,7 +1174,7 @@ void main() {
     });
 
     test('export-files extracts save files to a host folder', () {
-      final mc = Ps2MemoryCard(testCard);
+      final mc = openCardFile(testCard);
       try {
         final rc = doExportFiles(
             'export-files', mc, ['-d', tmpDir.path, '/BASLUS-20919NFL2K16']);
@@ -1189,7 +1189,7 @@ void main() {
     });
 
     test('export-files -i skips save when folder already exists', () {
-      final mc = Ps2MemoryCard(testCard);
+      final mc = openCardFile(testCard);
       try {
         final outDir =
             Directory(p.join(tmpDir.path, 'BASLUS-20919NFL2K16'))
@@ -1205,7 +1205,7 @@ void main() {
     });
 
     test('export-files errors when folder exists without -f or -i', () {
-      final mc = Ps2MemoryCard(testCard);
+      final mc = openCardFile(testCard);
       try {
         Directory(p.join(tmpDir.path, 'BASLUS-20919NFL2K16')).createSync();
         final rc = doExportFiles('export-files', mc,
@@ -1217,7 +1217,7 @@ void main() {
     });
 
     test('export-files -f overwrites into existing folder', () {
-      final mc = Ps2MemoryCard(testCard);
+      final mc = openCardFile(testCard);
       try {
         final outDir =
             Directory(p.join(tmpDir.path, 'BASLUS-20919NFL2K16'))
@@ -1232,7 +1232,7 @@ void main() {
     });
 
     test('export-files rejects mutually exclusive -f and -i', () {
-      final mc = Ps2MemoryCard(testCard);
+      final mc = openCardFile(testCard);
       try {
         final rc = doExportFiles('export-files', mc,
             ['-f', '-i', '/BASLUS-20919NFL2K16']);
@@ -1243,7 +1243,7 @@ void main() {
     });
 
     test('export-files requires at least one save directory argument', () {
-      final mc = Ps2MemoryCard(testCard);
+      final mc = openCardFile(testCard);
       try {
         final rc = doExportFiles('export-files', mc, []);
         expect(rc, equals(1));
@@ -1253,7 +1253,7 @@ void main() {
     });
 
     test('export-all extracts all 5 saves to host folders', () {
-      final mc = Ps2MemoryCard(testCard);
+      final mc = openCardFile(testCard);
       try {
         final rc =
             doExportAll('export-all', mc, ['-d', tmpDir.path]);
@@ -1272,7 +1272,7 @@ void main() {
     });
 
     test('export-all -i skips existing folders', () {
-      final mc = Ps2MemoryCard(testCard);
+      final mc = openCardFile(testCard);
       try {
         // Pre-create one save folder.
         Directory(p.join(tmpDir.path, 'BASLUS-20919NFL2K16')).createSync();
@@ -1386,7 +1386,7 @@ void main() {
       final tmpDir =
           Directory.systemTemp.createTempSync('dart_mymc_fromfiles_');
       try {
-        final srcMc = Ps2MemoryCard(testCard);
+        final srcMc = openCardFile(testCard);
         doExportFiles('export-files', srcMc,
             ['-d', tmpDir.path, '/BASLUS-20919NFL2K16']);
         srcMc.close();

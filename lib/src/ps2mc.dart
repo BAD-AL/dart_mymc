@@ -7,7 +7,6 @@ import 'dart:collection';
 import 'dart:typed_data';
 
 import 'ps2card_io.dart';
-import 'ps2card_io_native.dart'; // FileCardIo — native file-backed card I/O
 import 'ps2mc_dir.dart';
 import 'ps2mc_ecc.dart';
 import 'ps2save.dart';
@@ -629,14 +628,6 @@ class Ps2MemoryCard {
   // ---------------------------------------------------------------------------
   // Constructor / open
   // ---------------------------------------------------------------------------
-
-  /// Open or create a card from a file path.
-  factory Ps2MemoryCard(String path,
-      {bool ignoreEcc = false, List<int>? formatParams}) {
-    final io = FileCardIo.fromPath(path, creating: formatParams != null);
-    return Ps2MemoryCard.fromIo(io,
-        filePath: path, ignoreEcc: ignoreEcc, formatParams: formatParams);
-  }
 
   /// Open or create a card from any [Ps2CardIo] backend.
   Ps2MemoryCard.fromIo(Ps2CardIo io,

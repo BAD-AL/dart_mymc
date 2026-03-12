@@ -857,13 +857,12 @@ int doFormat(String cmd, String mcPath, List<String> args) {
   }
 
   try {
-    final mc = Ps2MemoryCard(mcPath,
-        formatParams: [
-          noEcc ? 0 : 1,
-          ps2mcStandardPageSize,
-          ps2mcStandardPagesPerEraseBlock,
-          pagesPerCard,
-        ]);
+    final mc = openCardFile(mcPath, formatParams: [
+      noEcc ? 0 : 1,
+      ps2mcStandardPageSize,
+      ps2mcStandardPagesPerEraseBlock,
+      pagesPerCard,
+    ]);
     mc.close();
     return 0;
   } on Ps2McError catch (e) {
@@ -912,7 +911,7 @@ int doCreate(String cmd, String mcPath, List<String> args) {
   }
 
   try {
-    final mc = Ps2MemoryCard(mcPath, formatParams: [
+    final mc = openCardFile(mcPath, formatParams: [
       1,
       ps2mcStandardPageSize,
       ps2mcStandardPagesPerEraseBlock,
@@ -1403,7 +1402,7 @@ int runMain(List<String> arguments) {
 
   Ps2MemoryCard? mc;
   try {
-    mc = Ps2MemoryCard(mcPath, ignoreEcc: parsed.ignoreEcc);
+    mc = openCardFile(mcPath, ignoreEcc: parsed.ignoreEcc);
 
     switch (cmd) {
       case 'dir':

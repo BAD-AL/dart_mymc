@@ -10,6 +10,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'ps2card_io.dart';
+import 'ps2mc.dart';
 
 /// dart:io backed card I/O (desktop / CLI).
 class FileCardIo implements Ps2CardIo {
@@ -36,6 +37,14 @@ class FileCardIo implements Ps2CardIo {
 
   @override
   void close() => _f.closeSync();
+}
+
+/// Open or create a [Ps2MemoryCard] from a file path (native only).
+Ps2MemoryCard openCardFile(String path,
+    {bool ignoreEcc = false, List<int>? formatParams}) {
+  final io = FileCardIo.fromPath(path, creating: formatParams != null);
+  return Ps2MemoryCard.fromIo(io,
+      filePath: path, ignoreEcc: ignoreEcc, formatParams: formatParams);
 }
 
 /// dart:io backed save I/O (desktop / CLI).
