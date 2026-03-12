@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:dart_mymc/dart_mymc.dart';
+import 'package:dart_mymc/dart_mymc_cli.dart';
+import 'package:dart_mymc/src/ps2card_io_native.dart';
 import 'package:dart_mymc/src/lzari.dart';
 import 'package:dart_mymc/src/ps2mc.dart';
 import 'package:dart_mymc/src/ps2mc_ecc.dart';
