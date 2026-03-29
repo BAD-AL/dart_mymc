@@ -278,6 +278,56 @@ void main() {
       expect(entries[1].name, equals('..'));
     });
 
+    test('format: 16MB card has double the capacity of 8MB', () {
+      final mc8 = openCardFile(freshCard,
+          formatParams: [
+            1,
+            ps2mcStandardPageSize,
+            ps2mcStandardPagesPerEraseBlock,
+            ps2mcStandardPagesPerCard,
+          ]);
+      final free8 = mc8.getFreeSpace();
+      mc8.close();
+
+      final fresh16 = p.join(tmpDir.path, 'fresh16.ps2');
+      final mc16 = openCardFile(fresh16,
+          formatParams: [
+            1,
+            ps2mcStandardPageSize,
+            ps2mcStandardPagesPerEraseBlock,
+            ps2mcStandardPagesPerCard * 2,
+          ]);
+      final free16 = mc16.getFreeSpace();
+      mc16.close();
+
+      expect(free16, greaterThan(free8 * 1.9));
+    });
+
+    test('format: 64MB card has approx 8x capacity of 8MB', () {
+      final mc8 = openCardFile(freshCard,
+          formatParams: [
+            1,
+            ps2mcStandardPageSize,
+            ps2mcStandardPagesPerEraseBlock,
+            ps2mcStandardPagesPerCard,
+          ]);
+      final free8 = mc8.getFreeSpace();
+      mc8.close();
+
+      final fresh64 = p.join(tmpDir.path, 'fresh64.ps2');
+      final mc64 = openCardFile(fresh64,
+          formatParams: [
+            1,
+            ps2mcStandardPageSize,
+            ps2mcStandardPagesPerEraseBlock,
+            ps2mcStandardPagesPerCard * 8,
+          ]);
+      final free64 = mc64.getFreeSpace();
+      mc64.close();
+
+      expect(free64, greaterThan(free8 * 7.5));
+    });
+
     // -------------------------------------------------------------------------
     // mkdir
     // -------------------------------------------------------------------------
@@ -1348,6 +1398,18 @@ void main() {
       } finally {
         card.close();
       }
+    });
+
+    test('format: 64MB card via API has 8x capacity', () {
+      final card8 = Ps2Card.format(sizeMb: 8);
+      final free8 = card8.info.freeBytes;
+      card8.close();
+
+      final card64 = Ps2Card.format(sizeMb: 64);
+      final free64 = card64.info.freeBytes;
+      card64.close();
+
+      expect(free64, greaterThan(free8 * 7.5));
     });
 
     test('openMemory: listSaves returns correct count and titles', () {

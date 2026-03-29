@@ -175,15 +175,21 @@ class Ps2Card {
           ignoreEcc: ignoreEcc));
 
   /// Format a blank card entirely in memory (no files created).
-  factory Ps2Card.format() {
+  ///
+  /// [sizeMb] can be 8 (default), 16, 32, or 64.
+  factory Ps2Card.format({int sizeMb = 8}) {
+    if (sizeMb != 8 && sizeMb != 16 && sizeMb != 32 && sizeMb != 64) {
+      throw ArgumentError('Invalid card size: $sizeMb MB (must be 8, 16, 32, or 64)');
+    }
+    final pagesPerCard = (sizeMb * 1024 * 1024) ~/ ps2mcStandardPageSize;
     final rawPageSize = ps2mcStandardPageSize + 16; // 512 + spare(16)
-    final totalBytes = ps2mcStandardPagesPerCard * rawPageSize;
+    final totalBytes = pagesPerCard * rawPageSize;
     final io = MemoryCardIo.blank(totalBytes);
     return Ps2Card._(Ps2MemoryCard.fromIo(io, formatParams: [
       1,
       ps2mcStandardPageSize,
       ps2mcStandardPagesPerEraseBlock,
-      ps2mcStandardPagesPerCard
+      pagesPerCard
     ]));
   }
 

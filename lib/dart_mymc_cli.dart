@@ -827,12 +827,22 @@ int doFormat(String cmd, String mcPath, List<String> args) {
   bool noEcc = false;
   bool overwrite = false;
   int? clusters;
+  int? sizeMb;
   int i = 0;
   while (i < args.length) {
     if (args[i] == '-e' || args[i] == '--no-ecc') {
       noEcc = true;
     } else if (args[i] == '-f' || args[i] == '--overwrite') {
       overwrite = true;
+    } else if ((args[i] == '-s' || args[i] == '--size') &&
+        i + 1 < args.length) {
+      sizeMb = int.tryParse(args[i + 1]);
+      if (sizeMb == null ||
+          (sizeMb != 8 && sizeMb != 16 && sizeMb != 32 && sizeMb != 64)) {
+        stderr.writeln('$cmd: invalid size: ${args[i + 1]} (must be 8, 16, 32, or 64)');
+        return 1;
+      }
+      i++;
     } else if ((args[i] == '-c' || args[i] == '--clusters') &&
         i + 1 < args.length) {
       clusters = int.tryParse(args[i + 1]);
@@ -849,6 +859,8 @@ int doFormat(String cmd, String mcPath, List<String> args) {
   if (clusters != null) {
     const ppc = ps2mcClusterSize ~/ ps2mcStandardPageSize;
     pagesPerCard = clusters * ppc;
+  } else if (sizeMb != null) {
+    pagesPerCard = (sizeMb * 1024 * 1024) ~/ ps2mcStandardPageSize;
   }
 
   if (!overwrite && File(mcPath).existsSync()) {
@@ -1252,8 +1264,10 @@ Options:
 Creates a new memory card image.
 
 Options:
+  -s SIZE, --size=SIZE
+                        Size in MB of the memory card (8, 16, 32, 64).
   -c CLUSTERS, --clusters=CLUSTERS
-                        Size in clusters of the memory card.
+                        Size in clusters of the memory card (overrides size).
   -f, --overwrite-existing
                         Overwrite any existing file.
   -e, --no-ecc          Create an image without ECC.
