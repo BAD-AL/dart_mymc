@@ -7,6 +7,7 @@
 import 'dart:io';
 
 import 'src/ps2card_io_native.dart'; // FileSaveIo
+import 'src/ps2card.dart';
 import 'src/ps2mc.dart';
 import 'src/ps2mc_dir.dart';
 import 'src/ps2save.dart';
@@ -480,24 +481,41 @@ int doImport(String cmd, Ps2MemoryCard mc, List<String> args) {
 /// `import-all` — import every subdirectory in a host folder as a save.
 int doImportAll(String cmd, Ps2MemoryCard mc, List<String> args) {
   bool ignoreExisting = false;
-  String? srcFolder;
+  String? source;
   int i = 0;
   while (i < args.length) {
     if (args[i] == '-i' || args[i] == '--ignore-existing') {
       ignoreExisting = true;
       i++;
     } else {
-      srcFolder ??= args[i];
+      source ??= args[i];
       i++;
     }
   }
-  if (srcFolder == null) {
-    stderr.writeln('$cmd: source folder required.');
+  if (source == null) {
+    stderr.writeln('$cmd: source folder or ZIP required.');
     return 1;
   }
-  final hostDir = Directory(srcFolder);
+
+  if (source.toLowerCase().endsWith('.zip') && File(source).existsSync()) {
+    stdout.writeln('Importing all saves from ZIP: $source');
+    try {
+      final card = Ps2Card.fromIo(mc.io);
+      card.importZip(File(source).readAsBytesSync(),
+          overwrite: !ignoreExisting);
+      return 0;
+    } on Ps2McError catch (e) {
+      stderr.writeln(e.toString());
+      return 1;
+    } on Exception catch (e) {
+      stderr.writeln(e.toString());
+      return 1;
+    }
+  }
+
+  final hostDir = Directory(source);
   if (!hostDir.existsSync()) {
-    stderr.writeln('$srcFolder: no such directory.');
+    stderr.writeln('$source: no such directory or ZIP file.');
     return 1;
   }
   int rc = 0;
@@ -668,6 +686,95 @@ int _extractSaveToFolder(
   return rc;
 }
 
+/// `_extractSaveToZip` — extract all files from a named save directory to a ZIP archive.
+int _extractSaveToZip(
+  String cmd,
+  Ps2MemoryCard mc,
+  String savepath, {
+  String? destDir,
+  bool overwriteExisting = false,
+  bool ignoreExisting = false,
+}) {
+  final savename = savepath.split('/').last;
+  final outPath = destDir != null ? '$destDir/$savename.zip' : '$savename.zip';
+  final outFile = File(outPath);
+
+  if (outFile.existsSync()) {
+    if (ignoreExisting) {
+      stdout.writeln('Skipping $savename (already exists)');
+      return 0;
+    }
+    if (!overwriteExisting) {
+      stderr.writeln('$outPath: file exists.');
+      return 1;
+    }
+  } else {
+    // Create the directory if it doesn't exist.
+    if (destDir != null) {
+      Directory(destDir).createSync(recursive: true);
+    }
+  }
+
+  stdout.writeln('Extracting $savepath -> $outPath');
+
+  try {
+    final sf = mc.exportSaveFile(savename);
+    final zipBytes = sf.toZip();
+    outFile.writeAsBytesSync(zipBytes);
+  } on Ps2McError catch (e) {
+    stderr.writeln(e.toString());
+    return 1;
+  } on Exception catch (e) {
+    stderr.writeln(e.toString());
+    return 1;
+  }
+
+  return 0;
+}
+
+/// `export-files-zip` — extract all files from named save directories to ZIP archives.
+int doExportFilesZip(String cmd, Ps2MemoryCard mc, List<String> args) {
+  bool overwriteExisting = false;
+  bool ignoreExisting = false;
+  String? destDir;
+  final dirs = <String>[];
+  int i = 0;
+  while (i < args.length) {
+    if (args[i] == '-f' || args[i] == '--overwrite-existing') {
+      overwriteExisting = true;
+      i++;
+    } else if (args[i] == '-i' || args[i] == '--ignore-existing') {
+      ignoreExisting = true;
+      i++;
+    } else if ((args[i] == '-d' || args[i] == '--directory') &&
+        i + 1 < args.length) {
+      destDir = args[i + 1];
+      i += 2;
+    } else {
+      dirs.add(args[i]);
+      i++;
+    }
+  }
+  if (dirs.isEmpty) {
+    stderr.writeln('$cmd: save directory name required.');
+    return 1;
+  }
+  if (overwriteExisting && ignoreExisting) {
+    stderr.writeln('$cmd: -f and -i are mutually exclusive.');
+    return 1;
+  }
+  int rc = 0;
+  for (final pattern in dirs) {
+    for (final savepath in mc.glob(pattern)) {
+      rc |= _extractSaveToZip(cmd, mc, savepath,
+          destDir: destDir,
+          overwriteExisting: overwriteExisting,
+          ignoreExisting: ignoreExisting);
+    }
+  }
+  return rc;
+}
+
 /// `export-files` — extract all files from named save directories to host folders.
 int doExportFiles(String cmd, Ps2MemoryCard mc, List<String> args) {
   bool overwriteExisting = false;
@@ -747,6 +854,64 @@ int doExportAll(String cmd, Ps2MemoryCard mc, List<String> args) {
   }
   root.close();
   return rc;
+}
+
+/// `export-all-zip` — extract all saves on the card to a single ZIP archive.
+int doExportAllZip(String cmd, Ps2MemoryCard mc, List<String> args, String mcPath) {
+  bool overwriteExisting = false;
+  String? destDir;
+  String? outName;
+  int i = 0;
+  while (i < args.length) {
+    if (args[i] == '-f' || args[i] == '--overwrite-existing') {
+      overwriteExisting = true;
+      i++;
+    } else if ((args[i] == '-d' || args[i] == '--directory') &&
+        i + 1 < args.length) {
+      destDir = args[i + 1];
+      i += 2;
+    } else if ((args[i] == '-o' || args[i] == '--output') &&
+        i + 1 < args.length) {
+      outName = args[i + 1];
+      i += 2;
+    } else {
+      i++;
+    }
+  }
+
+  if (outName == null) {
+    final baseName = mcPath.split(Platform.pathSeparator).last;
+    final dot = baseName.lastIndexOf('.');
+    outName = (dot == -1 ? baseName : baseName.substring(0, dot)) + '.zip';
+  }
+
+  final outPath = destDir != null ? '$destDir/$outName' : outName;
+  final outFile = File(outPath);
+
+  if (outFile.existsSync() && !overwriteExisting) {
+    stderr.writeln('$outPath: file exists.');
+    return 1;
+  }
+
+  if (destDir != null) {
+    Directory(destDir).createSync(recursive: true);
+  }
+
+  stdout.writeln('Extracting all saves -> $outPath');
+
+  try {
+    final ps2c = Ps2Card.fromIo(mc.io);
+    final zipBytes = ps2c.exportAllZip();
+    outFile.writeAsBytesSync(zipBytes);
+  } on Ps2McError catch (e) {
+    stderr.writeln(e.toString());
+    return 1;
+  } on Exception catch (e) {
+    stderr.writeln(e.toString());
+    return 1;
+  }
+
+  return 0;
 }
 
 /// `set` / `clear` — set or clear mode flags.
@@ -1217,6 +1382,19 @@ Options:
                         Create save folders inside "DIRECTORY".
   -h, --help            show this help message and exit''',
 
+  'export-all-zip': '''Usage: dart_mymc memcard.ps2 export-all-zip [options]
+
+Extract all saves on the card to a single ZIP archive.
+
+Options:
+  -f, --overwrite-existing
+                        Overwrite the ZIP file if it already exists.
+  -o FILE, --output=FILE
+                        The name of the ZIP file (default: cardname.zip).
+  -d DIRECTORY, --directory=DIRECTORY
+                        Create the ZIP file inside "DIRECTORY".
+  -h, --help            show this help message and exit''',
+
   'export-files': '''Usage: dart_mymc memcard.ps2 export-files [options] savedir ...
 
 Extract all files from save directories to host filesystem folders.
@@ -1228,6 +1406,19 @@ Options:
                         Skip saves whose output folder already exists.
   -d DIRECTORY, --directory=DIRECTORY
                         Create save folders inside "DIRECTORY".
+  -h, --help            show this help message and exit''',
+
+  'export-files-zip': '''Usage: dart_mymc memcard.ps2 export-files-zip [options] savedir ...
+
+Extract all files from save directories to ZIP archives.
+
+Options:
+  -f, --overwrite-existing
+                        Overwrite any ZIP files already exported.
+  -i, --ignore-existing
+                        Skip saves whose ZIP files already exist.
+  -d DIRECTORY, --directory=DIRECTORY
+                        Create ZIP files inside "DIRECTORY".
   -h, --help            show this help message and exit''',
 
   'export': '''Usage: dart_mymc memcard.ps2 export [options] directory ...
@@ -1285,9 +1476,11 @@ Options:
                         Import packaged save to "DEST" (not used for folders).
   -h, --help            show this help message and exit''',
 
-  'import-all': '''Usage: dart_mymc memcard.ps2 import-all [options] folder
+  'import-all': '''Usage: dart_mymc memcard.ps2 import-all [options] source
 
-Import every subdirectory inside "folder" as a save on the memory card.
+Import saves into the memory card from a host folder or a ZIP archive.
+- If source is a folder, every subdirectory is imported as a save.
+- If source is a ZIP file, every top-level folder in the ZIP is imported as a save.
 Non-directory entries are skipped with a warning.
 
 Options:
@@ -1351,8 +1544,10 @@ const _commandDescriptions = {
   'df': 'Display the amount free space.',
   'dir': 'Display save file information.',
   'export': 'Export save files from the memory card.',
-  'export-all': 'Extract all saves to host filesystem folders.',
+  'export-all': 'Extract every save to host filesystem folders.',
+  'export-all-zip': 'Extract every save to a single host filesystem ZIP archive.',
   'export-files': 'Extract save files to host filesystem folders.',
+  'export-files-zip': 'Extract save files to host filesystem ZIP archives.',
   'extract': 'Extract files from the memory card.',
   'format': 'Creates a new memory card image.',
   'import': 'Import save files (or raw folders) into the memory card.',
@@ -1362,6 +1557,7 @@ const _commandDescriptions = {
   'remove': 'Remove files and directories.',
   'rename': 'Rename a file or directory',
   'set': 'Set mode flags on files and directories',
+  'help': 'Get more detailed instructions for a command ( mymc help export-files )',
   'usage': 'Show detailed usage examples (optionally filtered by command name).',
   'u': 'Alias for usage.',
 };
@@ -1464,8 +1660,14 @@ int runMain(List<String> arguments) {
       case 'export-files':
         return doExportFiles(cmd, mc, subArgs);
 
+      case 'export-files-zip':
+        return doExportFilesZip(cmd, mc, subArgs);
+
       case 'export-all':
         return doExportAll(cmd, mc, subArgs);
+
+      case 'export-all-zip':
+        return doExportAllZip(cmd, mc, subArgs, mcPath);
 
       case 'delete':
         return doDelete(cmd, mc, subArgs);

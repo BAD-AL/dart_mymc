@@ -5,6 +5,7 @@
 
 // dart:io intentionally not imported — ps2save.dart is web-safe.
 import 'dart:typed_data';
+import 'package:archive/archive.dart';
 import 'lzari.dart';
 import 'ps2card_io.dart';
 import 'ps2mc_dir.dart';
@@ -405,6 +406,28 @@ class Ps2SaveFile {
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
     return combined.isEmpty ? dirname : '$dirname $combined';
+  }
+
+  /// Adds this save's files to the given [archive] (prefixed by the
+  /// directory name as a folder inside the ZIP).
+  void toArchive(Archive archive) {
+    final base = getDirectory().name;
+    for (int i = 0; i < _fileEnts.length; i++) {
+      final ent = _fileEnts[i];
+      final data = _fileData[i];
+      if (ent != null && data != null) {
+        final name = '$base/${ent.name}';
+        archive.addFile(ArchiveFile(name, data.length, data));
+      }
+    }
+  }
+
+  /// Returns this save as a ZIP archive containing all its files
+  /// (prefixed by the directory name as a folder inside the ZIP).
+  Uint8List toZip() {
+    final archive = Archive();
+    toArchive(archive);
+    return Uint8List.fromList(ZipEncoder().encode(archive)!);
   }
 
   // ---------------------------------------------------------------------------

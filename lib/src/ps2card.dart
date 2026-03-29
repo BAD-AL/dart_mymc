@@ -5,6 +5,7 @@
 // behind simple value types and factory constructors.
 
 import 'dart:typed_data';
+import 'package:archive/archive.dart';
 
 import 'ps2card_io.dart';
 import 'ps2mc.dart';
@@ -155,6 +156,10 @@ class Ps2Save {
     }
     return mio.toBytes();
   }
+
+  /// Returns this save as a ZIP archive containing all its files
+  /// (prefixed by the directory name as a folder inside the ZIP).
+  Uint8List toZip() => _sf.toZip();
 }
 
 // ---------------------------------------------------------------------------
@@ -235,10 +240,54 @@ class Ps2Card {
     return Ps2Save._(sf).toBytes(format: format);
   }
 
+  /// Export one save as a ZIP archive containing all its files.
+  Uint8List exportSaveZip(String dirName) {
+    final sf = _mc.exportSaveFile(dirName);
+    return Ps2Save._(sf).toZip();
+  }
+
+  /// Export all saves on the card as a single ZIP archive.
+  Uint8List exportAllZip() {
+    final archive = Archive();
+    final saves = listSaves();
+    for (final saveInfo in saves) {
+      final sf = _mc.exportSaveFile(saveInfo.dirName);
+      sf.toArchive(archive);
+    }
+    return Uint8List.fromList(ZipEncoder().encode(archive)!);
+  }
+
   /// Import a save from bytes (auto-detect format).
   void importSave(Uint8List data, {bool overwrite = false}) {
     final save = Ps2Save.fromBytes(data);
     _mc.importSaveFile(save._sf, overwrite);
+  }
+
+  /// Import one or more saves from a ZIP archive.
+  ///
+  /// Files are grouped by their top-level directory name in the ZIP.
+  /// Each group is imported as a separate save.
+  void importZip(Uint8List data, {bool overwrite = false}) {
+    final archive = ZipDecoder().decodeBytes(data);
+    final saves = <String, Map<String, Uint8List>>{};
+
+    for (final file in archive) {
+      if (!file.isFile) continue;
+      final parts = file.name.split('/');
+      if (parts.length < 2) continue; // Not in a subdirectory
+
+      final dirName = parts[0];
+      final fileName = parts.sublist(1).join('/');
+      if (fileName.isEmpty) continue;
+
+      saves.putIfAbsent(dirName, () => {})[fileName] =
+          file.content as Uint8List;
+    }
+
+    for (final entry in saves.entries) {
+      final save = Ps2Save.fromFiles(entry.key, entry.value);
+      _mc.importSaveFile(save._sf, overwrite);
+    }
   }
 
   /// Delete a save directory and all its files.

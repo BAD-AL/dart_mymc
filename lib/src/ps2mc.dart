@@ -625,6 +625,8 @@ class Ps2MemoryCard {
   final _LruCache<int, (Uint8List, bool)> _allocClusterCache = _LruCache(64);
   int _fatCursor = 0;
 
+  Ps2CardIo get io => _io;
+
   // ---------------------------------------------------------------------------
   // Constructor / open
   // ---------------------------------------------------------------------------

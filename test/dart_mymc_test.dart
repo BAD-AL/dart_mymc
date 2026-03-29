@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:archive/archive.dart';
 import 'package:dart_mymc/dart_mymc.dart';
 import 'package:dart_mymc/dart_mymc_cli.dart';
 import 'package:dart_mymc/src/ps2card_io_native.dart';
@@ -1493,5 +1494,98 @@ void main() {
         card.close();
       }
     });
+  });
+
+  group('Phase 8 — export-files-zip', () {
+    late Directory tmpDir;
+
+    setUp(() {
+      tmpDir = Directory.systemTemp.createTempSync('dart_mymc_zip_test_');
+    });
+
+    tearDown(() {
+      tmpDir.deleteSync(recursive: true);
+    });
+
+    test('doExportFilesZip extracts save to a ZIP archive', () {
+      final mc = openCardFile(testCard);
+      try {
+        final rc = doExportFilesZip(
+            'export-files-zip', mc, ['-d', tmpDir.path, '/BASLUS-20919VIP1']);
+        expect(rc, equals(0));
+        final outFile = File(p.join(tmpDir.path, 'BASLUS-20919VIP1.zip'));
+        expect(outFile.existsSync(), isTrue);
+        
+        final archive = ZipDecoder().decodeBytes(outFile.readAsBytesSync());
+        expect(archive.any((f) => f.name == 'BASLUS-20919VIP1/icon.sys'), isTrue);
+      } finally {
+        mc.close();
+      }
+    });
+
+    test('Ps2Card.exportSaveZip works via public API', () {
+      final card = Ps2Card.openMemory(File(testCard).readAsBytesSync());
+      try {
+        final zipBytes = card.exportSaveZip('BASLUS-20919VIP1');
+        final archive = ZipDecoder().decodeBytes(zipBytes);
+        expect(archive.any((f) => f.name == 'BASLUS-20919VIP1/icon.sys'), isTrue);
+      } finally {
+        card.close();
+      }
+    });
+
+    test('CLI integration: export-files-zip creates a zip file', () async {
+      final outFile = p.join(tmpDir.path, 'test.zip');
+      final result = await Process.run('dart', [
+        'run', 'bin/dart_mymc.dart', testCard,
+        'export-files-zip', '-d', tmpDir.path, '/BASLUS-20919VIP1'
+      ]);
+      expect(result.exitCode, equals(0));
+      expect(File(p.join(tmpDir.path, 'BASLUS-20919VIP1.zip')).existsSync(), isTrue);
+    }, timeout: const Timeout(Duration(seconds: 60)));
+
+    test('CLI integration: export-all-zip creates a single zip with all saves', () async {
+      final result = await Process.run('dart', [
+        'run', 'bin/dart_mymc.dart', testCard,
+        'export-all-zip', '-d', tmpDir.path, '-o', 'all.zip'
+      ]);
+      expect(result.exitCode, equals(0));
+      final zipFile = File(p.join(tmpDir.path, 'all.zip'));
+      expect(zipFile.existsSync(), isTrue);
+      
+      final archive = ZipDecoder().decodeBytes(zipFile.readAsBytesSync());
+      // Check for a few different saves.
+      expect(archive.any((f) => f.name.startsWith('BASLUS-20919VIP1/')), isTrue);
+      expect(archive.any((f) => f.name.startsWith('BADATA-SYSTEM/')), isTrue);
+    }, timeout: const Timeout(Duration(seconds: 60)));
+
+    test('CLI integration: import-all from ZIP archive', () async {
+      final zipPath = p.join(tmpDir.path, 'all.zip');
+      final cardPath = p.join(tmpDir.path, 'fresh.ps2');
+      
+      // 1. Export to ZIP
+      await Process.run('dart', [
+        'run', 'bin/dart_mymc.dart', testCard,
+        'export-all-zip', '-o', zipPath
+      ]);
+      
+      // 2. Format new card
+      await Process.run('dart', [
+        'run', 'bin/dart_mymc.dart', cardPath, 'format'
+      ]);
+      
+      // 3. Import from ZIP
+      final result = await Process.run('dart', [
+        'run', 'bin/dart_mymc.dart', cardPath,
+        'import-all', zipPath
+      ]);
+      expect(result.exitCode, equals(0));
+      
+      // 4. Verify content
+      final dir = await Process.run('dart', [
+        'run', 'bin/dart_mymc.dart', cardPath, 'dir'
+      ]);
+      expect(dir.stdout.toString(), contains('ESPN NFL 2K5'));
+    }, timeout: const Timeout(Duration(seconds: 120)));
   });
 }
