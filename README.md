@@ -1,4 +1,9 @@
 # dart_mymc
+[Try online version here](https://bad-al.github.io/mymc_web/) 
+
+<a href="[https://your-target-link.com](https://github.com/ps2dev/mymc)">
+  <img src="https://raw.githubusercontent.com/BAD-AL/mymc_web/main/HomePage.png" alt="Welcome screen" >
+</a>
 
 A Dart port (+ enhancements) of the PS2 memory card program 'mymc' [original link](http://www.csclub.uwaterloo.ca:11068/mymc/), [GitHub repo](https://github.com/ps2dev/mymc), 
 a PS2 Memory Card manager originally written in Python 2.7 by Ross Ridge.
@@ -314,6 +319,11 @@ dart test          # run all tests
 dart analyze       # static analysis
 dart run bin/dart_mymc.dart --help
 ```
+
+## Links
+- Web version git repo https://github.com/BAD-AL/mymc_web
+- Used in NFL2K5 Tool web version https://github.com/BAD-AL/nfl2k5web_web
+
 
 ## Development Notes
 Claude and Gemini were utilized in development of this project.
