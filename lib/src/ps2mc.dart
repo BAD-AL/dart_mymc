@@ -1192,6 +1192,16 @@ class Ps2MemoryCard {
     return result.ent.mode;
   }
 
+  /// Read the raw bytes of an arbitrary file path (returns null if not found).
+  Uint8List? getFileBytes(String path) {
+    final mode = getMode(path);
+    if (mode == null || !modeIsFile(mode)) return null;
+    final f = open(path);
+    final data = f.read(f.length);
+    f.close();
+    return data;
+  }
+
   /// Read the icon.sys file from a directory (if it exists and is valid).
   Uint8List? getIconSys(String dirname) {
     final path = dirname.endsWith('/')

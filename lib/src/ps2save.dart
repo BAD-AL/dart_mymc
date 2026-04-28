@@ -272,9 +272,20 @@ class IconSys {
   final String magic;
   final int titleOffset;
   final Uint8List titleBytes; // 68 bytes, Shift-JIS, null-terminated
-  final Uint8List normalIconName; // 64 bytes
+  final Uint8List normalIconName; // 64 bytes, null-terminated ASCII
   final Uint8List copyIconName; // 64 bytes
   final Uint8List delIconName; // 64 bytes
+
+  // Lighting & background (from offsets 12–191)
+  final int bgTransparency;         // uint32 at 12; divide by 128 to get 0..1 alpha
+  final List<int> bgColors;         // 16 uint32s at 16–79: 4 corners × [R,G,B,A], each 0–255
+  final List<double> lightDir1;     // float32[4] at 80
+  final List<double> lightDir2;     // float32[4] at 96
+  final List<double> lightDir3;     // float32[4] at 112
+  final List<double> lightColor1;   // float32[4] at 128
+  final List<double> lightColor2;   // float32[4] at 144
+  final List<double> lightColor3;   // float32[4] at 160
+  final List<double> ambient;       // float32[4] at 176
 
   IconSys({
     required this.magic,
@@ -283,10 +294,35 @@ class IconSys {
     required this.normalIconName,
     required this.copyIconName,
     required this.delIconName,
+    required this.bgTransparency,
+    required this.bgColors,
+    required this.lightDir1,
+    required this.lightDir2,
+    required this.lightDir3,
+    required this.lightColor1,
+    required this.lightColor2,
+    required this.lightColor3,
+    required this.ambient,
   });
 
   static const int size = 964;
   static const String expectedMagic = 'PS2D';
+
+  /// The filename of the normal (display) icon, decoded from null-terminated ASCII.
+  String get normalIcon => _decodeIconName(normalIconName);
+  String get copyIcon   => _decodeIconName(copyIconName);
+  String get deleteIcon => _decodeIconName(delIconName);
+
+  static String _decodeIconName(Uint8List bytes) {
+    final end = bytes.indexOf(0).let((i) => i == -1 ? bytes.length : i);
+    return String.fromCharCodes(bytes.sublist(0, end));
+  }
+
+  static List<double> _readFloats(ByteData bd, int offset, int count) =>
+      List.generate(count, (i) => bd.getFloat32(offset + i * 4, Endian.little));
+
+  static List<int> _readUint32s(ByteData bd, int offset, int count) =>
+      List.generate(count, (i) => bd.getUint32(offset + i * 4, Endian.little));
 
   static IconSys? unpack(Uint8List data) {
     if (data.length < size) return null;
@@ -303,6 +339,15 @@ class IconSys {
       normalIconName: Uint8List.fromList(data.sublist(260, 260 + 64)),
       copyIconName: Uint8List.fromList(data.sublist(324, 324 + 64)),
       delIconName: Uint8List.fromList(data.sublist(388, 388 + 64)),
+      bgTransparency: bd.getUint32(12, Endian.little),
+      bgColors: _readUint32s(bd, 16, 16),
+      lightDir1: _readFloats(bd, 80, 4),
+      lightDir2: _readFloats(bd, 96, 4),
+      lightDir3: _readFloats(bd, 112, 4),
+      lightColor1: _readFloats(bd, 128, 4),
+      lightColor2: _readFloats(bd, 144, 4),
+      lightColor3: _readFloats(bd, 160, 4),
+      ambient: _readFloats(bd, 176, 4),
     );
   }
 

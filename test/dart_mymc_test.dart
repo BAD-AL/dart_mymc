@@ -1588,4 +1588,121 @@ void main() {
       expect(dir.stdout.toString(), contains('ESPN NFL 2K5'));
     }, timeout: const Timeout(Duration(seconds: 120)));
   });
+
+  // ---------------------------------------------------------------------------
+  // Phase 9 — icon data (Ps2IconData / parseIconFile)
+  // ---------------------------------------------------------------------------
+
+  group('Phase 9 — icon data', () {
+    // Shared fixtures loaded once for the group.
+    late Ps2Card card;
+    late List<Ps2SaveInfo> saves;
+    late Ps2SaveInfo nfl;
+
+    setUp(() {
+      card  = Ps2Card.openMemory(File(testCard).readAsBytesSync());
+      saves = card.listSaves();
+      nfl   = saves.firstWhere((s) => s.dirName == 'BASLUS-20919NFL2K16');
+    });
+
+    tearDown(() => card.close());
+
+    // --- IconSys new fields ---
+
+    test('IconSys.normalIcon is a non-empty string', () {
+      Ps2MemoryCard mc  = openCardFile(testCard);
+      Uint8List raw     = mc.getIconSys('/BASLUS-20919NFL2K16')!;
+      mc.close();
+      IconSys ic        = IconSys.unpack(raw)!;
+      expect(ic.normalIcon, isNotEmpty);
+    });
+
+    test('IconSys lighting fields have correct lengths', () {
+      Ps2MemoryCard mc  = openCardFile(testCard);
+      Uint8List raw     = mc.getIconSys('/BASLUS-20919NFL2K16')!;
+      mc.close();
+      IconSys ic        = IconSys.unpack(raw)!;
+      expect(ic.bgColors.length,    equals(16)); // 4 corners × 4 components
+      expect(ic.lightDir1.length,   equals(4));
+      expect(ic.lightDir2.length,   equals(4));
+      expect(ic.lightDir3.length,   equals(4));
+      expect(ic.lightColor1.length, equals(4));
+      expect(ic.lightColor2.length, equals(4));
+      expect(ic.lightColor3.length, equals(4));
+      expect(ic.ambient.length,     equals(4));
+    });
+
+    // --- listSaves() populates iconData ---
+
+    test('listSaves: NFL2K16 save has non-null iconData', () {
+      expect(nfl.iconData, isNotNull);
+    });
+
+    test('listSaves: iconData has positive vertexCount and animationShapes', () {
+      Ps2IconData icon = nfl.iconData!;
+      expect(icon.vertexCount,     greaterThan(0));
+      expect(icon.animationShapes, greaterThan(0));
+    });
+
+    test('listSaves: iconData positions list length matches animationShapes', () {
+      Ps2IconData icon = nfl.iconData!;
+      expect(icon.positions.length, equals(icon.animationShapes));
+    });
+
+    test('listSaves: iconData buffer lengths are consistent with vertexCount', () {
+      Ps2IconData icon = nfl.iconData!;
+      for (Float32List pos in icon.positions) {
+        expect(pos.length, equals(icon.vertexCount * 3));
+      }
+      expect(icon.normals.length,      equals(icon.vertexCount * 3));
+      expect(icon.uvs.length,          equals(icon.vertexCount * 2));
+      expect(icon.vertexColors.length, equals(icon.vertexCount * 4));
+    });
+
+    test('listSaves: iconData texture is 128×128 RGB (49152 bytes) when present', () {
+      Uint8List? tex = nfl.iconData!.texture;
+      if (tex != null) {
+        expect(tex.length, equals(128 * 128 * 3));
+      }
+    });
+
+    test('listSaves: iconData lighting fields forwarded from IconSys', () {
+      Ps2IconData icon = nfl.iconData!;
+      expect(icon.bgColors.length,  equals(16));
+      expect(icon.lightDir1.length, equals(4));
+      expect(icon.ambient.length,   equals(4));
+    });
+
+    test('listSaves: BADATA-SYSTEM has null iconData (no displayable icon)', () {
+      Ps2SaveInfo sys = saves.firstWhere((s) => s.dirName == 'BADATA-SYSTEM');
+      // BADATA-SYSTEM is a system directory — it either has no icon.sys
+      // or its normalIcon resolves to nothing.
+      // Either way iconData should be null.
+      expect(sys.iconData, isNull);
+    });
+
+    // --- Ps2Save.iconData ---
+
+    test('Ps2Save.fromBytes(psu).iconData is non-null for NFL2K16', () {
+      Uint8List psuBytes = File('test/test_files/NFL2K16.psu').readAsBytesSync();
+      Ps2Save save       = Ps2Save.fromBytes(psuBytes);
+      expect(save.iconData, isNotNull);
+    });
+
+    test('Ps2Save.fromBytes(psu).iconData has consistent buffer lengths', () {
+      Uint8List psuBytes = File('test/test_files/NFL2K16.psu').readAsBytesSync();
+      Ps2IconData icon   = Ps2Save.fromBytes(psuBytes).iconData!;
+      expect(icon.positions.length,    equals(icon.animationShapes));
+      expect(icon.normals.length,      equals(icon.vertexCount * 3));
+      expect(icon.uvs.length,          equals(icon.vertexCount * 2));
+      expect(icon.vertexColors.length, equals(icon.vertexCount * 4));
+    });
+
+    test('Ps2Save.fromBytes(max).iconData matches psu iconData', () {
+      Ps2IconData psu = Ps2Save.fromBytes(File('test/test_files/NFL2K16.psu').readAsBytesSync()).iconData!;
+      Ps2IconData max = Ps2Save.fromBytes(File('test/test_files/NFL2K16.max').readAsBytesSync()).iconData!;
+      expect(max.vertexCount,     equals(psu.vertexCount));
+      expect(max.animationShapes, equals(psu.animationShapes));
+    });
+  });
 }

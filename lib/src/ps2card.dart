@@ -8,6 +8,7 @@ import 'dart:typed_data';
 import 'package:archive/archive.dart';
 
 import 'ps2card_io.dart';
+import 'ps2icon.dart';
 import 'ps2mc.dart';
 import 'ps2mc_dir.dart';
 import 'ps2save.dart';
@@ -24,11 +25,15 @@ class Ps2SaveInfo {
   final int sizeBytes;
   final DateTime modified;
 
+  /// Parsed 3D icon data, or null if the save has no icon.
+  final Ps2IconData? iconData;
+
   const Ps2SaveInfo({
     required this.dirName,
     required this.title,
     required this.sizeBytes,
     required this.modified,
+    this.iconData,
   });
 
   @override
@@ -133,6 +138,21 @@ class Ps2Save {
     return combined.isEmpty ? dirName : combined;
   }
 
+  /// Parsed 3D icon data, or null if the save has no icon.
+  Ps2IconData? get iconData {
+    final ic = _sf.getIconSys();
+    if (ic == null) return null;
+    final iconName = ic.normalIcon;
+    if (iconName.isEmpty) return null;
+    final dir = _sf.getDirectory();
+    final lower = iconName.toLowerCase();
+    for (int i = 0; i < dir.length; i++) {
+      final (PS2DirEntry ent, Uint8List data) = _sf.getFile(i);
+      if (ent.name.toLowerCase() == lower) return parseIconFile(data, ic);
+    }
+    return null;
+  }
+
   /// Every file stored in this save, with name, size, and raw bytes.
   List<Ps2FileInfo> get files {
     final dir = _sf.getDirectory();
@@ -214,12 +234,18 @@ class Ps2Card {
       if (ent.name == '.' || ent.name == '..') continue;
       final rawIconSys = _mc.getIconSys('/${ent.name}');
       String title = ent.name;
+      Ps2IconData? iconData;
       if (rawIconSys != null) {
         final ic = IconSys.unpack(rawIconSys);
         if (ic != null) {
           final (t1, t2) = ic.title();
           final combined = '$t1 $t2'.trim();
           if (combined.isNotEmpty) title = combined;
+          final iconName = ic.normalIcon;
+          if (iconName.isNotEmpty) {
+            final iconBytes = _mc.getFileBytes('/${ent.name}/$iconName');
+            if (iconBytes != null) iconData = parseIconFile(iconBytes, ic);
+          }
         }
       }
       result.add(Ps2SaveInfo(
@@ -227,6 +253,7 @@ class Ps2Card {
         title: title,
         sizeBytes: _mc.dirSize('/${ent.name}'),
         modified: ent.modified.toLocalDateTime(),
+        iconData: iconData,
       ));
     }
     dir.close();
